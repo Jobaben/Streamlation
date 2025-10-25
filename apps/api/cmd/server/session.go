@@ -33,8 +33,13 @@ var (
 	}
 )
 
+// TranslationSession represents a persisted translation session.
 type TranslationSession = sessionpkg.TranslationSession
+
+// TranslationSource describes the media source for a translation session.
 type TranslationSource = sessionpkg.TranslationSource
+
+// TranslationOptions captures optional parameters for a translation session.
 type TranslationOptions = sessionpkg.TranslationOptions
 
 type translationSessionInput struct {
@@ -58,7 +63,10 @@ type SessionStore interface {
 }
 
 var (
-	ErrSessionExists   = postgres.ErrSessionExists
+	// ErrSessionExists indicates that a session with the same ID already exists.
+	ErrSessionExists = postgres.ErrSessionExists
+
+	// ErrSessionNotFound indicates that the requested session does not exist.
 	ErrSessionNotFound = postgres.ErrSessionNotFound
 )
 

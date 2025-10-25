@@ -131,6 +131,9 @@ func parseBool(value string) bool {
 }
 
 var (
-	ErrSessionExists   = errors.New("session already exists")
+	// ErrSessionExists is returned when attempting to create a session that already exists.
+	ErrSessionExists = errors.New("session already exists")
+
+	// ErrSessionNotFound is returned when a session cannot be found in storage.
 	ErrSessionNotFound = errors.New("session not found")
 )
