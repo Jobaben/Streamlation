@@ -18,6 +18,7 @@ RUN pnpm --filter @streamlation/web build
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+RUN corepack enable
 COPY --from=builder /app/apps/web/.next ./.next
 COPY --from=builder /app/apps/web/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules
