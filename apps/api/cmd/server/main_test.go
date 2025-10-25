@@ -3,7 +3,6 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"go.uber.org/zap"
@@ -49,7 +48,7 @@ func TestNewLoggerHonorsEnv(t *testing.T) {
 
 // Ensure newLogger does not panic when env is unset.
 func TestNewLoggerDefaultLevel(t *testing.T) {
-	os.Unsetenv("APP_LOG_LEVEL")
+	t.Setenv("APP_LOG_LEVEL", "")
 	logger := newLogger()
 	defer func() { _ = logger.Sync() }()
 
