@@ -17,6 +17,20 @@ func TestGetListenAddr(t *testing.T) {
 	}
 }
 
+func TestGetDatabaseURLDefaults(t *testing.T) {
+	t.Setenv("APP_DATABASE_URL", "")
+	if got := getDatabaseURL(); got != defaultDatabaseURL {
+		t.Fatalf("expected default database URL, got %s", got)
+	}
+}
+
+func TestGetRedisAddrDefaults(t *testing.T) {
+	t.Setenv("APP_REDIS_ADDR", "")
+	if got := getRedisAddr(); got != defaultRedisAddr {
+		t.Fatalf("expected default redis addr, got %s", got)
+	}
+}
+
 func TestHealthHandler(t *testing.T) {
 	logger := newLogger()
 	defer func() { _ = logger.Sync() }()

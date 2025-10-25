@@ -29,12 +29,33 @@ func main() {
 
 	addr := getListenAddr()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dbURL := getDatabaseURL()
+	pgClient, err := newPGClient(ctx, dbURL)
+	if err != nil {
+		logger.Fatalw("failed to connect to database", "error", err)
+	}
+	defer func() {
+		if err := pgClient.Close(); err != nil {
+			logger.Errorw("failed to close database connection", "error", err)
+		}
+	}()
+
+	if err := EnsureSessionSchema(ctx, pgClient); err != nil {
+		logger.Fatalw("failed to ensure session schema", "error", err)
+	}
+
+	sessionStore := NewPostgresSessionStore(pgClient)
+
+	redisAddr := getRedisAddr()
+	enqueuer := NewRedisIngestionEnqueuer(redisAddr)
+
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthHandler(logger))
-
-	sessionManager := newTranslationSessionManager()
-	mux.HandleFunc("POST /sessions", createSessionHandler(sessionManager, logger))
-	mux.HandleFunc("GET /sessions/{id}", getSessionHandler(sessionManager, logger))
+	mux.HandleFunc("POST /sessions", createSessionHandler(sessionStore, enqueuer, logger))
+	mux.HandleFunc("GET /sessions/{id}", getSessionHandler(sessionStore, logger))
 
 	server := &http.Server{
 		Addr:              addr,
@@ -55,10 +76,10 @@ func main() {
 	<-shutdown
 	logger.Infow("shutdown signal received")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		logger.Errorw("graceful shutdown failed", "error", err)
 		if closeErr := server.Close(); closeErr != nil {
 			logger.Errorw("forced close failed", "error", closeErr)
@@ -71,6 +92,24 @@ func getListenAddr() string {
 		return addr
 	}
 	return defaultListenAddr
+}
+
+const defaultDatabaseURL = "postgres://streamlation:streamlation@localhost:5432/streamlation?sslmode=disable"
+
+func getDatabaseURL() string {
+	if url := os.Getenv("APP_DATABASE_URL"); url != "" {
+		return url
+	}
+	return defaultDatabaseURL
+}
+
+const defaultRedisAddr = "127.0.0.1:6379"
+
+func getRedisAddr() string {
+	if addr := os.Getenv("APP_REDIS_ADDR"); addr != "" {
+		return addr
+	}
+	return defaultRedisAddr
 }
 
 func healthHandler(logger *zap.SugaredLogger) http.Handler {

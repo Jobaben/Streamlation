@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
-	"sync"
 
 	"go.uber.org/zap"
 )
@@ -64,38 +64,25 @@ type translationOptionsInput struct {
 	ModelProfile       *string `json:"modelProfile"`
 }
 
-func newTranslationSessionManager() *translationSessionManager {
-	return &translationSessionManager{
-		sessions: make(map[string]TranslationSession),
-	}
+// SessionStore persists and retrieves translation sessions.
+type SessionStore interface {
+	Create(ctx context.Context, session TranslationSession) error
+	Get(ctx context.Context, id string) (TranslationSession, error)
+	Delete(ctx context.Context, id string) error
 }
 
-type translationSessionManager struct {
-	mu       sync.RWMutex
-	sessions map[string]TranslationSession
+// ErrSessionExists indicates a session already exists in the store.
+var ErrSessionExists = errors.New("session already exists")
+
+// ErrSessionNotFound indicates the requested session was not found.
+var ErrSessionNotFound = errors.New("session not found")
+
+// IngestionEnqueuer enqueues ingestion jobs for downstream processing.
+type IngestionEnqueuer interface {
+	EnqueueIngestion(ctx context.Context, sessionID string) error
 }
 
-func (m *translationSessionManager) create(session TranslationSession) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.sessions[session.ID]; exists {
-		return fmt.Errorf("session %s already exists", session.ID)
-	}
-
-	m.sessions[session.ID] = session
-	return nil
-}
-
-func (m *translationSessionManager) get(id string) (TranslationSession, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	session, ok := m.sessions[id]
-	return session, ok
-}
-
-func createSessionHandler(mgr *translationSessionManager, logger *zap.SugaredLogger) http.HandlerFunc {
+func createSessionHandler(store SessionStore, enqueuer IngestionEnqueuer, logger *zap.SugaredLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -123,8 +110,23 @@ func createSessionHandler(mgr *translationSessionManager, logger *zap.SugaredLog
 			return
 		}
 
-		if err := mgr.create(session); err != nil {
-			writeError(w, logger, http.StatusConflict, err)
+		ctx := r.Context()
+
+		if err := store.Create(ctx, session); err != nil {
+			if errors.Is(err, ErrSessionExists) {
+				writeError(w, logger, http.StatusConflict, err)
+				return
+			}
+			writeError(w, logger, http.StatusInternalServerError, fmt.Errorf("failed to persist session: %w", err))
+			return
+		}
+
+		if err := enqueuer.EnqueueIngestion(ctx, session.ID); err != nil {
+			logger.Errorw("failed to enqueue ingestion job", "error", err, "sessionID", session.ID)
+			if deleteErr := store.Delete(ctx, session.ID); deleteErr != nil {
+				logger.Errorw("failed to roll back session after enqueue error", "error", deleteErr, "sessionID", session.ID)
+			}
+			writeError(w, logger, http.StatusInternalServerError, errors.New("failed to enqueue ingestion job"))
 			return
 		}
 
@@ -136,7 +138,7 @@ func createSessionHandler(mgr *translationSessionManager, logger *zap.SugaredLog
 	}
 }
 
-func getSessionHandler(mgr *translationSessionManager, logger *zap.SugaredLogger) http.HandlerFunc {
+func getSessionHandler(store SessionStore, logger *zap.SugaredLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
@@ -150,9 +152,15 @@ func getSessionHandler(mgr *translationSessionManager, logger *zap.SugaredLogger
 			return
 		}
 
-		session, ok := mgr.get(id)
-		if !ok {
-			writeError(w, logger, http.StatusNotFound, fmt.Errorf("session %s not found", id))
+		ctx := r.Context()
+
+		session, err := store.Get(ctx, id)
+		if err != nil {
+			if errors.Is(err, ErrSessionNotFound) {
+				writeError(w, logger, http.StatusNotFound, fmt.Errorf("session %s not found", id))
+				return
+			}
+			writeError(w, logger, http.StatusInternalServerError, fmt.Errorf("failed to load session: %w", err))
 			return
 		}
 
