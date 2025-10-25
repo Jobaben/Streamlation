@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://streamlation.local/schemas/translation-session.json",
+  "title": "TranslationSession",
+  "description": "Represents the configuration required to start a translation session.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique session identifier",
+      "pattern": "^[a-zA-Z0-9_-]{8,64}$"
+    },
+    "source": {
+      "type": "object",
+      "description": "Streaming source metadata",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["hls", "dash", "rtmp", "file"],
+          "description": "Ingestion adapter to use"
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": ["type", "uri"],
+      "additionalProperties": false
+    },
+    "targetLanguage": {
+      "type": "string",
+      "description": "Two-letter ISO 639-1 code for the translation target.",
+      "pattern": "^[a-z]{2}$"
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "enableDubbing": {
+          "type": "boolean",
+          "default": false
+        },
+        "latencyToleranceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000,
+          "default": 5000
+        },
+        "modelProfile": {
+          "type": "string",
+          "enum": ["cpu-basic", "cpu-advanced", "gpu-accelerated"],
+          "default": "cpu-basic"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": ["id", "source", "targetLanguage"],
+  "additionalProperties": false
+}

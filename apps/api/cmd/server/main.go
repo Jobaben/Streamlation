@@ -4,26 +4,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // defaultListenAddr is the default address used when APP_SERVER_ADDR is not provided.
 const defaultListenAddr = ":8080"
 
 func main() {
+	logger := newLogger()
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			// Some environments (e.g. tests) return "invalid argument" on Sync; ignore it.
+			_ = err
+		}
+	}()
+
 	addr := getListenAddr()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthHandler)
+	mux.Handle("/healthz", healthHandler(logger))
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           loggingMiddleware(mux),
+		Handler:           loggingMiddleware(logger)(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -31,22 +41,22 @@ func main() {
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("server listening on %s", addr)
+		logger.Infow("server listening", "addr", addr)
 		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server failed: %v", err)
+			logger.Fatalw("server failed", "error", err)
 		}
 	}()
 
 	<-shutdown
-	log.Println("shutdown signal received")
+	logger.Infow("shutdown signal received")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("graceful shutdown failed: %v", err)
+		logger.Errorw("graceful shutdown failed", "error", err)
 		if closeErr := server.Close(); closeErr != nil {
-			log.Printf("forced close failed: %v", closeErr)
+			logger.Errorw("forced close failed", "error", closeErr)
 		}
 	}
 }
@@ -58,28 +68,37 @@ func getListenAddr() string {
 	return defaultListenAddr
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+func healthHandler(logger *zap.SugaredLogger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := fmt.Fprint(w, `{"status":"ok"}`); err != nil {
-		log.Printf("failed to write health response: %v", err)
-	}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := fmt.Fprint(w, `{"status":"ok"}`); err != nil {
+			logger.Errorw("failed to write health response", "error", err)
+		}
+	})
 }
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-		next.ServeHTTP(lrw, r)
-		duration := time.Since(start)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, lrw.statusCode, duration)
-	})
+func loggingMiddleware(logger *zap.SugaredLogger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			next.ServeHTTP(lrw, r)
+			duration := time.Since(start)
+			logger.Infow("request completed",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", lrw.statusCode,
+				"duration", duration.String(),
+			)
+		})
+	}
 }
 
 type loggingResponseWriter struct {
@@ -90,4 +109,27 @@ type loggingResponseWriter struct {
 func (lrw *loggingResponseWriter) WriteHeader(statusCode int) {
 	lrw.statusCode = statusCode
 	lrw.ResponseWriter.WriteHeader(statusCode)
+}
+
+func newLogger() *zap.SugaredLogger {
+	level := strings.ToLower(os.Getenv("APP_LOG_LEVEL"))
+	cfg := zap.NewProductionConfig()
+
+	switch level {
+	case "debug":
+		cfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "error":
+		cfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	case "warn", "warning":
+		cfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	default:
+		cfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	logger, err := cfg.Build()
+	if err != nil {
+		panic(fmt.Sprintf("failed to initialize logger: %v", err))
+	}
+
+	return logger.Sugar()
 }

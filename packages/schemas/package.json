@@ -1,0 +1,7 @@
+{
+  "name": "@streamlation/schemas",
+  "version": "0.0.1",
+  "private": true,
+  "files": ["*.json"],
+  "description": "Shared JSON schema definitions for API and frontend contracts"
+}
