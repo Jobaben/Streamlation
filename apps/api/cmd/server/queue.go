@@ -37,7 +37,9 @@ func pushToRedis(ctx context.Context, addr, queue, payload string) error {
 	if err != nil {
 		return fmt.Errorf("redis dial: %w", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)

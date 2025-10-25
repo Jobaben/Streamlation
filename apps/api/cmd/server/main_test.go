@@ -9,26 +9,26 @@ import (
 )
 
 func TestGetListenAddr(t *testing.T) {
-        t.Setenv("APP_SERVER_ADDR", "127.0.0.1:9000")
+	t.Setenv("APP_SERVER_ADDR", "127.0.0.1:9000")
 
-        got := getListenAddr()
-        if got != "127.0.0.1:9000" {
-                t.Fatalf("expected 127.0.0.1:9000, got %s", got)
-        }
+	got := getListenAddr()
+	if got != "127.0.0.1:9000" {
+		t.Fatalf("expected 127.0.0.1:9000, got %s", got)
+	}
 }
 
 func TestGetDatabaseURLDefaults(t *testing.T) {
-        t.Setenv("APP_DATABASE_URL", "")
-        if got := getDatabaseURL(); got != defaultDatabaseURL {
-                t.Fatalf("expected default database URL, got %s", got)
-        }
+	t.Setenv("APP_DATABASE_URL", "")
+	if got := getDatabaseURL(); got != defaultDatabaseURL {
+		t.Fatalf("expected default database URL, got %s", got)
+	}
 }
 
 func TestGetRedisAddrDefaults(t *testing.T) {
-        t.Setenv("APP_REDIS_ADDR", "")
-        if got := getRedisAddr(); got != defaultRedisAddr {
-                t.Fatalf("expected default redis addr, got %s", got)
-        }
+	t.Setenv("APP_REDIS_ADDR", "")
+	if got := getRedisAddr(); got != defaultRedisAddr {
+		t.Fatalf("expected default redis addr, got %s", got)
+	}
 }
 
 func TestHealthHandler(t *testing.T) {

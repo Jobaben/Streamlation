@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"testing"
 )
@@ -30,24 +32,35 @@ func TestRedisIngestionEnqueuer_UsesQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() {
+		_ = ln.Close()
+	}()
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		conn, err := ln.Accept()
 		if err != nil {
+			t.Errorf("failed to accept connection: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 
 		buf := make([]byte, 1024)
-		n, _ := conn.Read(buf)
+		n, readErr := conn.Read(buf)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			t.Errorf("failed to read command: %v", readErr)
+			return
+		}
 		received := string(buf[:n])
 		if !bytes.Contains([]byte(received), []byte(ingestionQueueName)) {
 			t.Errorf("expected queue name in command, got %q", received)
 		}
-		conn.Write([]byte(":1\r\n"))
+		if _, err := conn.Write([]byte(":1\r\n")); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}()
 
 	enqueuer := NewRedisIngestionEnqueuer(ln.Addr().String())
