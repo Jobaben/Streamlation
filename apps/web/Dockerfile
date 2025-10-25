@@ -12,7 +12,7 @@ WORKDIR /app
 COPY --from=deps /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable
 RUN pnpm --filter @streamlation/web build
 
 FROM node:20-alpine
