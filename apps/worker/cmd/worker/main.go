@@ -1,3 +1,4 @@
+// Package main contains the worker service entry point.
 package main
 
 import (
