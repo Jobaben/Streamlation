@@ -9,6 +9,9 @@ import (
 	"net/url"
 	"regexp"
 
+	postgres "streamlation/packages/backend/postgres"
+	sessionpkg "streamlation/packages/backend/session"
+
 	"go.uber.org/zap"
 )
 
@@ -30,26 +33,9 @@ var (
 	}
 )
 
-// TranslationSession models the configuration for a translation session.
-type TranslationSession struct {
-	ID             string             `json:"id"`
-	Source         TranslationSource  `json:"source"`
-	TargetLanguage string             `json:"targetLanguage"`
-	Options        TranslationOptions `json:"options"`
-}
-
-// TranslationSource describes the input stream configuration.
-type TranslationSource struct {
-	Type string `json:"type"`
-	URI  string `json:"uri"`
-}
-
-// TranslationOptions contains tuning values for a session.
-type TranslationOptions struct {
-	EnableDubbing      bool   `json:"enableDubbing"`
-	LatencyToleranceMs int    `json:"latencyToleranceMs"`
-	ModelProfile       string `json:"modelProfile"`
-}
+type TranslationSession = sessionpkg.TranslationSession
+type TranslationSource = sessionpkg.TranslationSource
+type TranslationOptions = sessionpkg.TranslationOptions
 
 type translationSessionInput struct {
 	ID             string                   `json:"id"`
@@ -71,11 +57,10 @@ type SessionStore interface {
 	Delete(ctx context.Context, id string) error
 }
 
-// ErrSessionExists indicates a session already exists in the store.
-var ErrSessionExists = errors.New("session already exists")
-
-// ErrSessionNotFound indicates the requested session was not found.
-var ErrSessionNotFound = errors.New("session not found")
+var (
+	ErrSessionExists   = postgres.ErrSessionExists
+	ErrSessionNotFound = postgres.ErrSessionNotFound
+)
 
 // IngestionEnqueuer enqueues ingestion jobs for downstream processing.
 type IngestionEnqueuer interface {

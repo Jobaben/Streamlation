@@ -12,6 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	postgres "streamlation/packages/backend/postgres"
+	queuepkg "streamlation/packages/backend/queue"
+
 	"go.uber.org/zap"
 )
 
@@ -33,7 +36,7 @@ func main() {
 	defer cancel()
 
 	dbURL := getDatabaseURL()
-	pgClient, err := newPGClient(ctx, dbURL)
+	pgClient, err := postgres.NewClient(ctx, dbURL)
 	if err != nil {
 		logger.Fatalw("failed to connect to database", "error", err)
 	}
@@ -43,14 +46,14 @@ func main() {
 		}
 	}()
 
-	if err := EnsureSessionSchema(ctx, pgClient); err != nil {
+	if err := postgres.EnsureSessionSchema(ctx, pgClient); err != nil {
 		logger.Fatalw("failed to ensure session schema", "error", err)
 	}
 
-	sessionStore := NewPostgresSessionStore(pgClient)
+	sessionStore := postgres.NewSessionStore(pgClient)
 
 	redisAddr := getRedisAddr()
-	enqueuer := NewRedisIngestionEnqueuer(redisAddr)
+	enqueuer := queuepkg.NewRedisIngestionEnqueuer(redisAddr)
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthHandler(logger))
