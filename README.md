@@ -40,6 +40,12 @@ Environment variables:
 - `APP_SERVER_ADDR`: address for the HTTP server (default `:8080`)
 - `APP_LOG_LEVEL`: `debug`, `info`, `warn`, or `error`
 
+Endpoints:
+
+- `GET /healthz`: health check used by local orchestration and CI.
+- `POST /sessions`: validate and register a translation session using the shared schema defaults.
+- `GET /sessions/{id}`: retrieve a previously registered session definition.
+
 ### Worker
 
 ```bash

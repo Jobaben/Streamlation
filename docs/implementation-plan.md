@@ -31,6 +31,9 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 
 ## Phase 2: MVP Translation Pipeline (Weeks 4-8)
 
+> **Progress checkpoint (2025-10-25):** In-memory session creation and retrieval APIs are merged. The next pick-up point is persisting
+> session metadata to Postgres and wiring the handlers to enqueue work for the ingestion pipeline.
+
 **Objectives**
 
 - Deliver end-to-end ingestion → audio normalization → ASR → translation → subtitle output.
@@ -50,6 +53,11 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
   - Generate SRT/VTT artifacts in `services/output/` and expose subtitle buffers via WebSocket APIs.
 - **Frontend Integration**
   - Create Next.js pages/components for stream configuration, language selection, and live subtitle dashboards.
+- **Session Control APIs**
+  - ✅ `POST /sessions` validates payloads against shared schema expectations and registers sessions in memory for MVP coordination.
+  - ✅ `GET /sessions/{id}` retrieves stored session configurations for downstream pipeline stages.
+  - ⏭️ Persist sessions to Postgres and emit ingestion jobs so the worker can start pulling media for translation.
+  - ⏭️ Add WebSocket session status updates surfaced from Redis-backed worker progress events.
 
 **Exit Criteria**
 
@@ -58,6 +66,9 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 - Integration tests covering ingestion through subtitle delivery pass reliably in CI.
 
 ## Phase 3: Enhanced Media Experience (Weeks 9-12)
+
+> **Adjustment:** The dubbing, casting, and authentication workstreams now depend on durable session storage arriving from Phase 2.
+> Ensure the Phase 2 pick-up items above are complete before scheduling Phase 3 execution.
 
 **Objectives**
 
@@ -104,6 +115,29 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
   - Track third-party model licenses, capture acknowledgements, and complete `docs/compliance.md`.
 - **Distribution & Deployment**
   - Package installers, publish deployment guides for offline-first distribution, and document hardware presets.
+
+## Phase 5: Scale & Enterprise Readiness (Weeks 17-20)
+
+**Objectives**
+
+- Prepare Streamlation for multi-tenant enterprise deployments and regional compliance requirements.
+- Optimize infrastructure costs with autoscaling policies and cold-start mitigation.
+- Finalize rollout playbooks and SRE operational readiness.
+
+**Key Workstreams**
+
+- **Multi-Tenant Architecture**
+  - Introduce organization-level RBAC, workspace isolation, and configurable quota management.
+- **Scalability & Resilience**
+  - Define autoscaling rules for ingestion workers, media processors, and AI services; exercise chaos testing for fault tolerance.
+- **Operational Runbooks**
+  - Produce on-call guides, incident response templates, and upgrade/rollback procedures validated through gamedays.
+
+**Exit Criteria**
+
+- Verified tenant isolation with load and security testing artifacts.
+- Autoscaling and chaos scenarios documented with remediation steps.
+- Operations handbook approved by SRE leadership with rollout and rollback workflows.
 
 **Exit Criteria**
 
