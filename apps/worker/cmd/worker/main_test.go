@@ -72,8 +72,11 @@ func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	sessionRequested := make(chan struct{}, 1)
+
 	store := &stubSessionStore{
 		getFunc: func(context.Context, string) (sessionpkg.TranslationSession, error) {
+			sessionRequested <- struct{}{}
 			return sessionpkg.TranslationSession{}, postgres.ErrSessionNotFound
 		},
 	}
@@ -90,8 +93,18 @@ func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
 		close(done)
 	}()
 
+	select {
+	case <-sessionRequested:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for session lookup")
+	}
+
 	cancel()
 	<-done
+
+	if remaining := len(consumer.jobs); remaining != 0 {
+		t.Fatalf("expected all jobs to be consumed, %d remaining", remaining)
+	}
 }
 
 type stubSessionStore struct {
