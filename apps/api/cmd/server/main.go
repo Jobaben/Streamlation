@@ -1,3 +1,4 @@
+// Package main starts the API server.
 package main
 
 import (
