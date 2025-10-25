@@ -3,4 +3,5 @@ go 1.22
 use (
         ./apps/api
         ./apps/worker
+        ./packages/go/backend
 )

@@ -1,4 +1,4 @@
-package main
+package postgres
 
 import (
 	"bufio"
@@ -15,21 +15,21 @@ import (
 	"time"
 )
 
-type pgClient struct {
+type Client struct {
 	mu   sync.Mutex
 	conn net.Conn
 	r    *bufio.Reader
 	w    *bufio.Writer
 }
 
-type pgConfig struct {
+type Config struct {
 	addr     string
 	user     string
 	database string
 }
 
-func newPGClient(ctx context.Context, databaseURL string) (*pgClient, error) {
-	cfg, err := parsePGConfig(databaseURL)
+func NewClient(ctx context.Context, databaseURL string) (*Client, error) {
+	cfg, err := parseConfig(databaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func newPGClient(ctx context.Context, databaseURL string) (*pgClient, error) {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
 
-	client := &pgClient{
+	client := &Client{
 		conn: conn,
 		r:    bufio.NewReader(conn),
 		w:    bufio.NewWriter(conn),
@@ -54,16 +54,16 @@ func newPGClient(ctx context.Context, databaseURL string) (*pgClient, error) {
 	return client, nil
 }
 
-func parsePGConfig(databaseURL string) (pgConfig, error) {
+func parseConfig(databaseURL string) (Config, error) {
 	u, err := url.Parse(databaseURL)
 	if err != nil {
-		return pgConfig{}, fmt.Errorf("invalid database url: %w", err)
+		return Config{}, fmt.Errorf("invalid database url: %w", err)
 	}
 
 	switch u.Scheme {
 	case "postgres", "postgresql":
 	default:
-		return pgConfig{}, fmt.Errorf("unsupported scheme: %s", u.Scheme)
+		return Config{}, fmt.Errorf("unsupported scheme: %s", u.Scheme)
 	}
 
 	host := u.Hostname()
@@ -87,13 +87,13 @@ func parsePGConfig(databaseURL string) (pgConfig, error) {
 	}
 
 	if mode := u.Query().Get("sslmode"); mode != "" && mode != "disable" {
-		return pgConfig{}, fmt.Errorf("unsupported sslmode: %s", mode)
+		return Config{}, fmt.Errorf("unsupported sslmode: %s", mode)
 	}
 
-	return pgConfig{addr: net.JoinHostPort(host, port), user: user, database: database}, nil
+	return Config{addr: net.JoinHostPort(host, port), user: user, database: database}, nil
 }
 
-func (c *pgClient) startup(ctx context.Context, user, database string) error {
+func (c *Client) startup(ctx context.Context, user, database string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -124,7 +124,7 @@ func (c *pgClient) startup(ctx context.Context, user, database string) error {
 	}
 }
 
-func (c *pgClient) writeStartup(user, database string) error {
+func (c *Client) writeStartup(user, database string) error {
 	const protocolVersion = 196608 // 3.0
 
 	var payload bytes.Buffer
@@ -164,7 +164,7 @@ func writeCString(buf *bytes.Buffer, value string) {
 	buf.WriteByte(0)
 }
 
-func (c *pgClient) readMessage(ctx context.Context) (byte, []byte, error) {
+func (c *Client) readMessage(ctx context.Context) (byte, []byte, error) {
 	if err := c.applyDeadline(ctx); err != nil {
 		return 0, nil, err
 	}
@@ -188,7 +188,7 @@ func (c *pgClient) readMessage(ctx context.Context) (byte, []byte, error) {
 	return typ, payload, nil
 }
 
-func (c *pgClient) applyDeadline(ctx context.Context) error {
+func (c *Client) applyDeadline(ctx context.Context) error {
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := c.conn.SetDeadline(deadline); err != nil {
 			return err
@@ -201,7 +201,7 @@ func (c *pgClient) applyDeadline(ctx context.Context) error {
 	return nil
 }
 
-func (c *pgClient) simpleQuery(ctx context.Context, query string) (*queryResult, error) {
+func (c *Client) simpleQuery(ctx context.Context, query string) (*queryResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -248,7 +248,7 @@ func (c *pgClient) simpleQuery(ctx context.Context, query string) (*queryResult,
 	}
 }
 
-func (c *pgClient) writeQuery(query string) error {
+func (c *Client) writeQuery(query string) error {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteByte('Q')
 	body := append([]byte(query), 0)
@@ -264,7 +264,7 @@ func (c *pgClient) writeQuery(query string) error {
 	return c.w.Flush()
 }
 
-func (c *pgClient) discardUntilReady(ctx context.Context) error {
+func (c *Client) discardUntilReady(ctx context.Context) error {
 	for {
 		typ, _, err := c.readMessage(ctx)
 		if err != nil {
@@ -276,12 +276,12 @@ func (c *pgClient) discardUntilReady(ctx context.Context) error {
 	}
 }
 
-func (c *pgClient) Exec(ctx context.Context, query string) error {
+func (c *Client) Exec(ctx context.Context, query string) error {
 	_, err := c.simpleQuery(ctx, query)
 	return err
 }
 
-func (c *pgClient) QueryRow(ctx context.Context, query string) ([]string, error) {
+func (c *Client) QueryRow(ctx context.Context, query string) ([]string, error) {
 	res, err := c.simpleQuery(ctx, query)
 	if err != nil {
 		return nil, err
@@ -292,7 +292,7 @@ func (c *pgClient) QueryRow(ctx context.Context, query string) ([]string, error)
 	return res.rows[0], nil
 }
 
-func (c *pgClient) Close() error {
+func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.conn.Close()
@@ -309,7 +309,6 @@ func parseRowDescription(payload []byte) int {
 		return 0
 	}
 	count := int(binary.BigEndian.Uint16(payload[:2]))
-	// We do not need the field metadata for current usage.
 	return count
 }
 
@@ -347,13 +346,13 @@ func parseCommandComplete(payload []byte) string {
 	return strings.TrimRight(string(payload), "\x00")
 }
 
-type pgError struct {
+type Error struct {
 	Severity string
 	Code     string
 	Message  string
 }
 
-func (e *pgError) Error() string {
+func (e *Error) Error() string {
 	if e.Message != "" {
 		return e.Message
 	}
@@ -361,7 +360,7 @@ func (e *pgError) Error() string {
 }
 
 func parseErrorResponse(payload []byte) error {
-	err := &pgError{}
+	err := &Error{}
 	idx := 0
 	for idx < len(payload) {
 		fieldType := payload[idx]

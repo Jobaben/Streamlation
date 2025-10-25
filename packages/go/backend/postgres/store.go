@@ -1,4 +1,4 @@
-package main
+package postgres
 
 import (
 	"context"
@@ -6,28 +6,27 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	sessionpkg "streamlation/packages/backend/session"
 )
 
-type pgExecutor interface {
+type executor interface {
 	Exec(ctx context.Context, query string) error
 	QueryRow(ctx context.Context, query string) ([]string, error)
 }
 
-// NewPostgresSessionStore constructs a Postgres-backed session store using the provided client.
-func NewPostgresSessionStore(client pgExecutor) *PostgresSessionStore {
-	return &PostgresSessionStore{client: client}
+func NewSessionStore(client executor) *SessionStore {
+	return &SessionStore{client: client}
 }
 
-// PostgresSessionStore persists sessions in a PostgreSQL database via pgClient.
-type PostgresSessionStore struct {
-	client pgExecutor
+type SessionStore struct {
+	client executor
 }
 
-// Create inserts a new translation session record.
-func (s *PostgresSessionStore) Create(ctx context.Context, session TranslationSession) error {
+func (s *SessionStore) Create(ctx context.Context, session sessionpkg.TranslationSession) error {
 	query := buildInsertSessionQuery(session)
 	if err := s.client.Exec(ctx, query); err != nil {
-		var pgErr *pgError
+		var pgErr *Error
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return ErrSessionExists
 		}
@@ -36,36 +35,35 @@ func (s *PostgresSessionStore) Create(ctx context.Context, session TranslationSe
 	return nil
 }
 
-// Get retrieves a translation session by identifier.
-func (s *PostgresSessionStore) Get(ctx context.Context, id string) (TranslationSession, error) {
+func (s *SessionStore) Get(ctx context.Context, id string) (sessionpkg.TranslationSession, error) {
 	query := fmt.Sprintf("SELECT id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile FROM translation_sessions WHERE id = %s LIMIT 1", quoteLiteral(id))
 	row, err := s.client.QueryRow(ctx, query)
 	if err != nil {
-		return TranslationSession{}, err
+		return sessionpkg.TranslationSession{}, err
 	}
 	if row == nil {
-		return TranslationSession{}, ErrSessionNotFound
+		return sessionpkg.TranslationSession{}, ErrSessionNotFound
 	}
 
 	if len(row) != 7 {
-		return TranslationSession{}, fmt.Errorf("unexpected column count: %d", len(row))
+		return sessionpkg.TranslationSession{}, fmt.Errorf("unexpected column count: %d", len(row))
 	}
 
 	latency, err := strconv.Atoi(row[5])
 	if err != nil {
-		return TranslationSession{}, fmt.Errorf("invalid latency value: %w", err)
+		return sessionpkg.TranslationSession{}, fmt.Errorf("invalid latency value: %w", err)
 	}
 
 	enableDubbing := parseBool(row[4])
 
-	session := TranslationSession{
+	session := sessionpkg.TranslationSession{
 		ID: row[0],
-		Source: TranslationSource{
+		Source: sessionpkg.TranslationSource{
 			Type: row[1],
 			URI:  row[2],
 		},
 		TargetLanguage: row[3],
-		Options: TranslationOptions{
+		Options: sessionpkg.TranslationOptions{
 			EnableDubbing:      enableDubbing,
 			LatencyToleranceMs: latency,
 			ModelProfile:       row[6],
@@ -75,28 +73,26 @@ func (s *PostgresSessionStore) Get(ctx context.Context, id string) (TranslationS
 	return session, nil
 }
 
-// Delete removes a session record. It is safe to call even if the session is absent.
-func (s *PostgresSessionStore) Delete(ctx context.Context, id string) error {
+func (s *SessionStore) Delete(ctx context.Context, id string) error {
 	query := fmt.Sprintf("DELETE FROM translation_sessions WHERE id = %s", quoteLiteral(id))
 	return s.client.Exec(ctx, query)
 }
 
-// EnsureSessionSchema creates the sessions table if it does not already exist.
-func EnsureSessionSchema(ctx context.Context, client pgExecutor) error {
+func EnsureSessionSchema(ctx context.Context, client executor) error {
 	const ddl = `CREATE TABLE IF NOT EXISTS translation_sessions (
-        id TEXT PRIMARY KEY,
-        source_type TEXT NOT NULL,
-        source_uri TEXT NOT NULL,
-        target_language TEXT NOT NULL,
-        enable_dubbing BOOLEAN NOT NULL,
-        latency_tolerance_ms INTEGER NOT NULL,
-        model_profile TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+id TEXT PRIMARY KEY,
+source_type TEXT NOT NULL,
+source_uri TEXT NOT NULL,
+target_language TEXT NOT NULL,
+enable_dubbing BOOLEAN NOT NULL,
+latency_tolerance_ms INTEGER NOT NULL,
+model_profile TEXT NOT NULL,
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )`
 	return client.Exec(ctx, ddl)
 }
 
-func buildInsertSessionQuery(session TranslationSession) string {
+func buildInsertSessionQuery(session sessionpkg.TranslationSession) string {
 	values := []string{
 		quoteLiteral(session.ID),
 		quoteLiteral(session.Source.Type),
@@ -133,3 +129,11 @@ func parseBool(value string) bool {
 		return false
 	}
 }
+
+var (
+	// ErrSessionExists is returned when attempting to create a session that already exists.
+	ErrSessionExists = errors.New("session already exists")
+
+	// ErrSessionNotFound is returned when a session cannot be found in storage.
+	ErrSessionNotFound = errors.New("session not found")
+)

@@ -1,18 +1,20 @@
-package main
+package postgres
 
 import (
 	"context"
 	"errors"
 	"strings"
 	"testing"
+
+	sessionpkg "streamlation/packages/backend/session"
 )
 
 func TestBuildInsertSessionQuery(t *testing.T) {
-	session := TranslationSession{
+	session := sessionpkg.TranslationSession{
 		ID:             "abc123",
-		Source:         TranslationSource{Type: "hls", URI: "https://example.com/a.m3u8"},
+		Source:         sessionpkg.TranslationSource{Type: "hls", URI: "https://example.com/a.m3u8"},
 		TargetLanguage: "en",
-		Options:        TranslationOptions{EnableDubbing: true, LatencyToleranceMs: 1500, ModelProfile: "cpu-basic"},
+		Options:        sessionpkg.TranslationOptions{EnableDubbing: true, LatencyToleranceMs: 1500, ModelProfile: "cpu-basic"},
 	}
 
 	query := buildInsertSessionQuery(session)
@@ -27,21 +29,21 @@ func TestBuildInsertSessionQuery(t *testing.T) {
 	}
 }
 
-func TestPostgresSessionStore_CreateDuplicate(t *testing.T) {
+func TestSessionStore_CreateDuplicate(t *testing.T) {
 	expectedQuery := ""
-	client := &stubPGExecutor{
+	client := &stubExecutor{
 		execFunc: func(_ context.Context, query string) error {
 			expectedQuery = query
-			return &pgError{Code: "23505", Message: "duplicate"}
+			return &Error{Code: "23505", Message: "duplicate"}
 		},
 	}
 
-	store := NewPostgresSessionStore(client)
-	session := TranslationSession{
+	store := NewSessionStore(client)
+	session := sessionpkg.TranslationSession{
 		ID:             "dup",
-		Source:         TranslationSource{Type: "hls", URI: "https://example.com"},
+		Source:         sessionpkg.TranslationSource{Type: "hls", URI: "https://example.com"},
 		TargetLanguage: "fr",
-		Options:        TranslationOptions{},
+		Options:        sessionpkg.TranslationOptions{},
 	}
 
 	err := store.Create(context.Background(), session)
@@ -54,8 +56,8 @@ func TestPostgresSessionStore_CreateDuplicate(t *testing.T) {
 	}
 }
 
-func TestPostgresSessionStore_Get(t *testing.T) {
-	client := &stubPGExecutor{
+func TestSessionStore_Get(t *testing.T) {
+	client := &stubExecutor{
 		queryRowFunc: func(_ context.Context, query string) ([]string, error) {
 			if !strings.Contains(query, "WHERE id = 'known'") {
 				t.Fatalf("unexpected query: %s", query)
@@ -64,7 +66,7 @@ func TestPostgresSessionStore_Get(t *testing.T) {
 		},
 	}
 
-	store := NewPostgresSessionStore(client)
+	store := NewSessionStore(client)
 	session, err := store.Get(context.Background(), "known")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -81,23 +83,23 @@ func TestPostgresSessionStore_Get(t *testing.T) {
 	}
 }
 
-func TestPostgresSessionStore_GetNotFound(t *testing.T) {
-	client := &stubPGExecutor{queryRowFunc: func(context.Context, string) ([]string, error) { return nil, nil }}
-	store := NewPostgresSessionStore(client)
+func TestSessionStore_GetNotFound(t *testing.T) {
+	client := &stubExecutor{queryRowFunc: func(context.Context, string) ([]string, error) { return nil, nil }}
+	store := NewSessionStore(client)
 	_, err := store.Get(context.Background(), "missing")
 	if !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("expected ErrSessionNotFound, got %v", err)
 	}
 }
 
-func TestPostgresSessionStore_Delete(t *testing.T) {
+func TestSessionStore_Delete(t *testing.T) {
 	var executed bool
-	client := &stubPGExecutor{execFunc: func(context.Context, string) error {
+	client := &stubExecutor{execFunc: func(context.Context, string) error {
 		executed = true
 		return nil
 	}}
 
-	store := NewPostgresSessionStore(client)
+	store := NewSessionStore(client)
 	if err := store.Delete(context.Background(), "id"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -106,19 +108,19 @@ func TestPostgresSessionStore_Delete(t *testing.T) {
 	}
 }
 
-type stubPGExecutor struct {
+type stubExecutor struct {
 	execFunc     func(context.Context, string) error
 	queryRowFunc func(context.Context, string) ([]string, error)
 }
 
-func (s *stubPGExecutor) Exec(ctx context.Context, query string) error {
+func (s *stubExecutor) Exec(ctx context.Context, query string) error {
 	if s.execFunc != nil {
 		return s.execFunc(ctx, query)
 	}
 	return nil
 }
 
-func (s *stubPGExecutor) QueryRow(ctx context.Context, query string) ([]string, error) {
+func (s *stubExecutor) QueryRow(ctx context.Context, query string) ([]string, error) {
 	if s.queryRowFunc != nil {
 		return s.queryRowFunc(ctx, query)
 	}
