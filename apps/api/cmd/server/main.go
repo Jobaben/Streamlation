@@ -58,6 +58,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthHandler(logger))
 	mux.HandleFunc("POST /sessions", createSessionHandler(sessionStore, enqueuer, logger))
+	mux.HandleFunc("GET /sessions", listSessionsHandler(sessionStore, logger))
 	mux.HandleFunc("GET /sessions/{id}", getSessionHandler(sessionStore, logger))
 
 	server := &http.Server{
