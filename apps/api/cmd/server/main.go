@@ -32,6 +32,10 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthHandler(logger))
 
+	sessionManager := newTranslationSessionManager()
+	mux.HandleFunc("POST /sessions", createSessionHandler(sessionManager, logger))
+	mux.HandleFunc("GET /sessions/{id}", getSessionHandler(sessionManager, logger))
+
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           loggingMiddleware(logger)(mux),
