@@ -1,4 +1,4 @@
-module streamlation/apps/api
+module streamlation/apps/worker
 
 go 1.22
 
