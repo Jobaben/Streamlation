@@ -5,12 +5,12 @@ WORKDIR /app
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY apps/web/package.json ./apps/web/
 COPY packages/schemas/package.json ./packages/schemas/
-RUN corepack enable && pnpm fetch
+RUN corepack enable && pnpm install --no-frozen-lockfile
 
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY --from=deps /pnpm-lock.yaml ./pnpm-lock.yaml || true
-COPY --from=deps /app/node_modules ./node_modules || true
+COPY --from=deps /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN corepack enable && pnpm install --frozen-lockfile
 RUN pnpm --filter @streamlation/web build
