@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 
 	postgres "streamlation/packages/backend/postgres"
 	sessionpkg "streamlation/packages/backend/session"
@@ -60,6 +61,7 @@ type SessionStore interface {
 	Create(ctx context.Context, session TranslationSession) error
 	Get(ctx context.Context, id string) (TranslationSession, error)
 	Delete(ctx context.Context, id string) error
+	List(ctx context.Context, limit int) ([]TranslationSession, error)
 }
 
 var (
@@ -159,6 +161,37 @@ func getSessionHandler(store SessionStore, logger *zap.SugaredLogger) http.Handl
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(session); err != nil {
+			logger.Errorw("failed to encode response", "error", err)
+		}
+	}
+}
+
+func listSessionsHandler(store SessionStore, logger *zap.SugaredLogger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		limit := 50
+		if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+			value, err := strconv.Atoi(limitParam)
+			if err != nil || value <= 0 || value > 100 {
+				writeError(w, logger, http.StatusBadRequest, errors.New("limit must be between 1 and 100"))
+				return
+			}
+			limit = value
+		}
+
+		sessions, err := store.List(r.Context(), limit)
+		if err != nil {
+			writeError(w, logger, http.StatusInternalServerError, fmt.Errorf("failed to list sessions: %w", err))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(sessions); err != nil {
 			logger.Errorw("failed to encode response", "error", err)
 		}
 	}

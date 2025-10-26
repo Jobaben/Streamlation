@@ -292,6 +292,14 @@ func (c *Client) QueryRow(ctx context.Context, query string) ([]string, error) {
 	return res.rows[0], nil
 }
 
+func (c *Client) Query(ctx context.Context, query string) ([][]string, error) {
+	res, err := c.simpleQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return res.rows, nil
+}
+
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

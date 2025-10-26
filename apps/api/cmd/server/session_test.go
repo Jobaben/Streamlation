@@ -220,10 +220,61 @@ func TestGetSessionHandler_Success(t *testing.T) {
 	}
 }
 
+func TestListSessionsHandler_Success(t *testing.T) {
+	expected := []TranslationSession{{
+		ID:             "s1",
+		Source:         TranslationSource{Type: "hls", URI: "https://example.com"},
+		TargetLanguage: "es",
+	}}
+
+	store := &stubSessionStore{listFunc: func(context.Context, int) ([]TranslationSession, error) {
+		return expected, nil
+	}}
+
+	logger := newLogger()
+	defer func() { _ = logger.Sync() }()
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	rr := httptest.NewRecorder()
+
+	handler := listSessionsHandler(store, logger)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rr.Code)
+	}
+
+	var sessions []TranslationSession
+	if err := json.Unmarshal(rr.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if len(sessions) != 1 || sessions[0].ID != "s1" {
+		t.Fatalf("unexpected sessions: %#v", sessions)
+	}
+}
+
+func TestListSessionsHandler_InvalidLimit(t *testing.T) {
+	store := &stubSessionStore{}
+	logger := newLogger()
+	defer func() { _ = logger.Sync() }()
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions?limit=abc", nil)
+	rr := httptest.NewRecorder()
+
+	handler := listSessionsHandler(store, logger)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rr.Code)
+	}
+}
+
 type stubSessionStore struct {
 	createFunc func(context.Context, TranslationSession) error
 	getFunc    func(context.Context, string) (TranslationSession, error)
 	deleteFunc func(context.Context, string) error
+	listFunc   func(context.Context, int) ([]TranslationSession, error)
 }
 
 func (s *stubSessionStore) Create(ctx context.Context, session TranslationSession) error {
@@ -245,6 +296,13 @@ func (s *stubSessionStore) Delete(ctx context.Context, id string) error {
 		return s.deleteFunc(ctx, id)
 	}
 	return nil
+}
+
+func (s *stubSessionStore) List(ctx context.Context, limit int) ([]TranslationSession, error) {
+	if s.listFunc != nil {
+		return s.listFunc(ctx, limit)
+	}
+	return nil, nil
 }
 
 type stubEnqueuer struct {

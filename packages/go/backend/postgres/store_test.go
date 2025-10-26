@@ -108,9 +108,35 @@ func TestSessionStore_Delete(t *testing.T) {
 	}
 }
 
+func TestSessionStore_List(t *testing.T) {
+	expectedQuery := ""
+	client := &stubExecutor{
+		queryFunc: func(_ context.Context, query string) ([][]string, error) {
+			expectedQuery = query
+			return [][]string{{"id1", "hls", "https://example.com/1", "es", "t", "1500", "cpu-basic"}}, nil
+		},
+	}
+
+	store := NewSessionStore(client)
+	sessions, err := store.List(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+	if sessions[0].ID != "id1" {
+		t.Fatalf("unexpected session id: %s", sessions[0].ID)
+	}
+	if expectedQuery == "" {
+		t.Fatal("expected list query to be executed")
+	}
+}
+
 type stubExecutor struct {
 	execFunc     func(context.Context, string) error
 	queryRowFunc func(context.Context, string) ([]string, error)
+	queryFunc    func(context.Context, string) ([][]string, error)
 }
 
 func (s *stubExecutor) Exec(ctx context.Context, query string) error {
@@ -123,6 +149,13 @@ func (s *stubExecutor) Exec(ctx context.Context, query string) error {
 func (s *stubExecutor) QueryRow(ctx context.Context, query string) ([]string, error) {
 	if s.queryRowFunc != nil {
 		return s.queryRowFunc(ctx, query)
+	}
+	return nil, nil
+}
+
+func (s *stubExecutor) Query(ctx context.Context, query string) ([][]string, error) {
+	if s.queryFunc != nil {
+		return s.queryFunc(ctx, query)
 	}
 	return nil, nil
 }

@@ -13,6 +13,7 @@ import (
 type executor interface {
 	Exec(ctx context.Context, query string) error
 	QueryRow(ctx context.Context, query string) ([]string, error)
+	Query(ctx context.Context, query string) ([][]string, error)
 }
 
 func NewSessionStore(client executor) *SessionStore {
@@ -45,6 +46,43 @@ func (s *SessionStore) Get(ctx context.Context, id string) (sessionpkg.Translati
 		return sessionpkg.TranslationSession{}, ErrSessionNotFound
 	}
 
+	session, err := rowToSession(row)
+	if err != nil {
+		return sessionpkg.TranslationSession{}, err
+	}
+
+	return session, nil
+}
+
+func (s *SessionStore) Delete(ctx context.Context, id string) error {
+	query := fmt.Sprintf("DELETE FROM translation_sessions WHERE id = %s", quoteLiteral(id))
+	return s.client.Exec(ctx, query)
+}
+
+// List retrieves up to limit translation sessions ordered by creation time (newest first).
+func (s *SessionStore) List(ctx context.Context, limit int) ([]sessionpkg.TranslationSession, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := fmt.Sprintf("SELECT id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile FROM translation_sessions ORDER BY created_at DESC LIMIT %d", limit)
+	rows, err := s.client.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := make([]sessionpkg.TranslationSession, 0, len(rows))
+	for _, row := range rows {
+		session, err := rowToSession(row)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
+}
+
+func rowToSession(row []string) (sessionpkg.TranslationSession, error) {
 	if len(row) != 7 {
 		return sessionpkg.TranslationSession{}, fmt.Errorf("unexpected column count: %d", len(row))
 	}
@@ -71,11 +109,6 @@ func (s *SessionStore) Get(ctx context.Context, id string) (sessionpkg.Translati
 	}
 
 	return session, nil
-}
-
-func (s *SessionStore) Delete(ctx context.Context, id string) error {
-	query := fmt.Sprintf("DELETE FROM translation_sessions WHERE id = %s", quoteLiteral(id))
-	return s.client.Exec(ctx, query)
 }
 
 func EnsureSessionSchema(ctx context.Context, client executor) error {
