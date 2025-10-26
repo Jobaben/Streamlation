@@ -21,6 +21,7 @@ import (
 
 const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+// StatusSubscriber subscribes to status events for a translation session.
 type StatusSubscriber interface {
 	Subscribe(ctx context.Context, sessionID string) (statuspkg.StatusStream, error)
 }
@@ -66,12 +67,16 @@ func sessionStatusHandler(subscriber StatusSubscriber, logger *zap.SugaredLogger
 		acceptKey := computeAcceptKey(key)
 		response := fmt.Sprintf("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", acceptKey)
 		if _, err := rw.WriteString(response); err != nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				logger.Errorw("failed to close connection after handshake write error", "error", closeErr)
+			}
 			logger.Errorw("failed to write websocket handshake", "error", err)
 			return
 		}
 		if err := rw.Flush(); err != nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				logger.Errorw("failed to close connection after handshake flush error", "error", closeErr)
+			}
 			logger.Errorw("failed to flush websocket handshake", "error", err)
 			return
 		}
@@ -82,16 +87,24 @@ func sessionStatusHandler(subscriber StatusSubscriber, logger *zap.SugaredLogger
 		stream, err := subscriber.Subscribe(ctx, sessionID)
 		if err != nil {
 			logger.Errorw("failed to subscribe to status stream", "error", err, "sessionID", sessionID)
-			_ = writeWebSocketCloseFrame(conn, 1011)
-			_ = conn.Close()
+			if frameErr := writeWebSocketCloseFrame(conn, 1011); frameErr != nil {
+				logger.Errorw("failed to write websocket close frame", "error", frameErr, "sessionID", sessionID)
+			}
+			if closeErr := conn.Close(); closeErr != nil {
+				logger.Errorw("failed to close websocket connection", "error", closeErr, "sessionID", sessionID)
+			}
 			return
 		}
 		defer func() {
 			if err := stream.Close(); err != nil {
 				logger.Errorw("failed to close status stream", "error", err, "sessionID", sessionID)
 			}
-			_ = writeWebSocketCloseFrame(conn, 1000)
-			_ = conn.Close()
+			if frameErr := writeWebSocketCloseFrame(conn, 1000); frameErr != nil {
+				logger.Errorw("failed to write websocket close frame", "error", frameErr, "sessionID", sessionID)
+			}
+			if closeErr := conn.Close(); closeErr != nil {
+				logger.Errorw("failed to close websocket connection", "error", closeErr, "sessionID", sessionID)
+			}
 		}()
 
 		go websocketReadLoop(ctx, conn, cancel, logger)

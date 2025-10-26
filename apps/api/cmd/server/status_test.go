@@ -94,7 +94,7 @@ type stubStatusSubscriber struct {
 	lastSessionID string
 }
 
-func (s *stubStatusSubscriber) Subscribe(ctx context.Context, sessionID string) (statuspkg.StatusStream, error) {
+func (s *stubStatusSubscriber) Subscribe(_ context.Context, sessionID string) (statuspkg.StatusStream, error) {
 	s.lastSessionID = sessionID
 	s.stream = newStubStatusStream()
 	return s.stream, nil
