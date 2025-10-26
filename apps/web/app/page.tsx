@@ -617,8 +617,8 @@ export default function HomePage(): JSX.Element {
         <h2>Live session status</h2>
         <p>
           Subscribe to WebSocket updates published by the worker and surfaced by
-          <code> /sessions/{{id}}/events </code> to observe ingestion progress in
-          real time.
+          <code> /sessions/{"{"}id{"}"}/events </code> to observe ingestion
+          progress in real time.
         </p>
         {selectedSession ? (
           <div className="selection-banner">
