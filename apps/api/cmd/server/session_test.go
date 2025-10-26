@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	statuspkg "streamlation/packages/backend/status"
 )
 
 func TestCreateSessionHandler_Success(t *testing.T) {
@@ -45,7 +47,13 @@ func TestCreateSessionHandler_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 
-	handler := createSessionHandler(store, enqueuer, logger)
+	var events []statuspkg.SessionStatusEvent
+	publisher := &stubStatusPublisher{publishFunc: func(_ context.Context, event statuspkg.SessionStatusEvent) error {
+		events = append(events, event)
+		return nil
+	}}
+
+	handler := createSessionHandler(store, enqueuer, publisher, logger)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
@@ -64,6 +72,16 @@ func TestCreateSessionHandler_Success(t *testing.T) {
 	if enqueued != "session123" {
 		t.Fatalf("expected session to be enqueued, got %s", enqueued)
 	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected two status events, got %d", len(events))
+	}
+	if events[0].Stage != "session" || events[0].State != "registered" {
+		t.Fatalf("unexpected first event: %#v", events[0])
+	}
+	if events[1].Stage != "ingestion" || events[1].State != "queued" {
+		t.Fatalf("unexpected second event: %#v", events[1])
+	}
 }
 
 func TestCreateSessionHandler_InvalidPayload(t *testing.T) {
@@ -75,7 +93,8 @@ func TestCreateSessionHandler_InvalidPayload(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewBufferString("{"))
 	rr := httptest.NewRecorder()
 
-	handler := createSessionHandler(store, enqueuer, logger)
+	publisher := &stubStatusPublisher{}
+	handler := createSessionHandler(store, enqueuer, publisher, logger)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusBadRequest {
@@ -107,7 +126,8 @@ func TestCreateSessionHandler_Duplicate(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 
-	handler := createSessionHandler(store, enqueuer, logger)
+	publisher := &stubStatusPublisher{}
+	handler := createSessionHandler(store, enqueuer, publisher, logger)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusConflict {
@@ -144,7 +164,13 @@ func TestCreateSessionHandler_EnqueueFailureRollsBack(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 
-	handler := createSessionHandler(store, enqueuer, logger)
+	var failureEvent statuspkg.SessionStatusEvent
+	publisher := &stubStatusPublisher{publishFunc: func(_ context.Context, event statuspkg.SessionStatusEvent) error {
+		failureEvent = event
+		return nil
+	}}
+
+	handler := createSessionHandler(store, enqueuer, publisher, logger)
 	handler.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusInternalServerError {
@@ -153,6 +179,10 @@ func TestCreateSessionHandler_EnqueueFailureRollsBack(t *testing.T) {
 
 	if deleted != "rollback42" {
 		t.Fatalf("expected rollback for session rollback42, got %s", deleted)
+	}
+
+	if failureEvent.State != "error" || failureEvent.Stage != "ingestion" {
+		t.Fatalf("expected failure status event, got %#v", failureEvent)
 	}
 }
 
@@ -312,6 +342,17 @@ type stubEnqueuer struct {
 func (e *stubEnqueuer) EnqueueIngestion(ctx context.Context, sessionID string) error {
 	if e.enqueueFunc != nil {
 		return e.enqueueFunc(ctx, sessionID)
+	}
+	return nil
+}
+
+type stubStatusPublisher struct {
+	publishFunc func(context.Context, statuspkg.SessionStatusEvent) error
+}
+
+func (s *stubStatusPublisher) Publish(ctx context.Context, event statuspkg.SessionStatusEvent) error {
+	if s.publishFunc != nil {
+		return s.publishFunc(ctx, event)
 	}
 	return nil
 }

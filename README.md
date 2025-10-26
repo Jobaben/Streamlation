@@ -44,7 +44,9 @@ Endpoints:
 
 - `GET /healthz`: health check used by local orchestration and CI.
 - `POST /sessions`: validate and register a translation session using the shared schema defaults.
+- `GET /sessions`: list recent sessions ordered by creation time.
 - `GET /sessions/{id}`: retrieve a previously registered session definition.
+- `GET /sessions/{id}/events` (WebSocket): stream real-time status updates for a session.
 
 ### Worker
 
@@ -53,8 +55,8 @@ cd apps/worker
 go run ./cmd/worker
 ```
 
-The worker currently emits heartbeat logs and is ready to wire into Redis-backed
-queues in Phase 2.
+The worker consumes ingestion jobs from Redis, looks up session metadata, and
+emits Redis-backed status events that the API streams to connected clients.
 
 ### Frontend
 

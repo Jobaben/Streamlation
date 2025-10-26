@@ -8,6 +8,7 @@ import (
 	postgres "streamlation/packages/backend/postgres"
 	queuepkg "streamlation/packages/backend/queue"
 	sessionpkg "streamlation/packages/backend/session"
+	statuspkg "streamlation/packages/backend/status"
 )
 
 func TestGetDatabaseURLDefault(t *testing.T) {
@@ -47,7 +48,13 @@ func TestIngestionProcessorProcessesJob(t *testing.T) {
 	logger := newLogger()
 	defer func() { _ = logger.Sync() }()
 
-	processor := &ingestionProcessor{store: store, consumer: consumer, logger: logger}
+	var events []statuspkg.SessionStatusEvent
+	publisher := &stubStatusPublisher{publishFunc: func(_ context.Context, event statuspkg.SessionStatusEvent) error {
+		events = append(events, event)
+		return nil
+	}}
+
+	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, logger: logger}
 
 	done := make(chan struct{})
 	go func() {
@@ -66,6 +73,16 @@ func TestIngestionProcessorProcessesJob(t *testing.T) {
 
 	cancel()
 	<-done
+
+	if len(events) != 2 {
+		t.Fatalf("expected two status events, got %d", len(events))
+	}
+	if events[0].State != "dequeued" || events[0].Stage != "ingestion" {
+		t.Fatalf("unexpected first event: %#v", events[0])
+	}
+	if events[1].State != "ready" || events[1].Stage != "ingestion" {
+		t.Fatalf("unexpected second event: %#v", events[1])
+	}
 }
 
 func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
@@ -85,7 +102,13 @@ func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
 	logger := newLogger()
 	defer func() { _ = logger.Sync() }()
 
-	processor := &ingestionProcessor{store: store, consumer: consumer, logger: logger}
+	var events []statuspkg.SessionStatusEvent
+	publisher := &stubStatusPublisher{publishFunc: func(_ context.Context, event statuspkg.SessionStatusEvent) error {
+		events = append(events, event)
+		return nil
+	}}
+
+	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, logger: logger}
 
 	done := make(chan struct{})
 	go func() {
@@ -104,6 +127,16 @@ func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
 
 	if remaining := len(consumer.jobs); remaining != 0 {
 		t.Fatalf("expected all jobs to be consumed, %d remaining", remaining)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected two status events, got %d", len(events))
+	}
+	if events[0].State != "dequeued" {
+		t.Fatalf("expected dequeued event first, got %#v", events[0])
+	}
+	if events[1].State != "not_found" {
+		t.Fatalf("expected not_found event, got %#v", events[1])
 	}
 }
 
@@ -134,4 +167,15 @@ func (s *stubConsumer) Pop(ctx context.Context, timeout time.Duration) (*queuepk
 	job := s.jobs[0]
 	s.jobs = s.jobs[1:]
 	return job, nil
+}
+
+type stubStatusPublisher struct {
+	publishFunc func(context.Context, statuspkg.SessionStatusEvent) error
+}
+
+func (s *stubStatusPublisher) Publish(ctx context.Context, event statuspkg.SessionStatusEvent) error {
+	if s.publishFunc != nil {
+		return s.publishFunc(ctx, event)
+	}
+	return nil
 }

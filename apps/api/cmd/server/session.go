@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"time"
 
 	postgres "streamlation/packages/backend/postgres"
 	sessionpkg "streamlation/packages/backend/session"
+	statuspkg "streamlation/packages/backend/status"
 
 	"go.uber.org/zap"
 )
@@ -77,7 +79,12 @@ type IngestionEnqueuer interface {
 	EnqueueIngestion(ctx context.Context, sessionID string) error
 }
 
-func createSessionHandler(store SessionStore, enqueuer IngestionEnqueuer, logger *zap.SugaredLogger) http.HandlerFunc {
+// StatusPublisher emits session status updates to interested subscribers.
+type StatusPublisher interface {
+	Publish(ctx context.Context, event statuspkg.SessionStatusEvent) error
+}
+
+func createSessionHandler(store SessionStore, enqueuer IngestionEnqueuer, publisher StatusPublisher, logger *zap.SugaredLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -116,13 +123,52 @@ func createSessionHandler(store SessionStore, enqueuer IngestionEnqueuer, logger
 			return
 		}
 
+		now := time.Now().UTC()
+		if publisher != nil {
+			event := statuspkg.SessionStatusEvent{
+				SessionID: session.ID,
+				Stage:     "session",
+				State:     "registered",
+				Detail:    "session persisted",
+				Timestamp: now,
+			}
+			if err := publisher.Publish(ctx, event); err != nil {
+				logger.Errorw("failed to publish session registration event", "error", err, "sessionID", session.ID)
+			}
+		}
+
 		if err := enqueuer.EnqueueIngestion(ctx, session.ID); err != nil {
 			logger.Errorw("failed to enqueue ingestion job", "error", err, "sessionID", session.ID)
 			if deleteErr := store.Delete(ctx, session.ID); deleteErr != nil {
 				logger.Errorw("failed to roll back session after enqueue error", "error", deleteErr, "sessionID", session.ID)
 			}
+			if publisher != nil {
+				failureEvent := statuspkg.SessionStatusEvent{
+					SessionID: session.ID,
+					Stage:     "ingestion",
+					State:     "error",
+					Detail:    "failed to enqueue ingestion job",
+					Timestamp: time.Now().UTC(),
+				}
+				if err := publisher.Publish(ctx, failureEvent); err != nil {
+					logger.Errorw("failed to publish enqueue failure event", "error", err, "sessionID", session.ID)
+				}
+			}
 			writeError(w, logger, http.StatusInternalServerError, errors.New("failed to enqueue ingestion job"))
 			return
+		}
+
+		if publisher != nil {
+			event := statuspkg.SessionStatusEvent{
+				SessionID: session.ID,
+				Stage:     "ingestion",
+				State:     "queued",
+				Detail:    "ingestion job enqueued",
+				Timestamp: time.Now().UTC(),
+			}
+			if err := publisher.Publish(ctx, event); err != nil {
+				logger.Errorw("failed to publish ingestion queued event", "error", err, "sessionID", session.ID)
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
