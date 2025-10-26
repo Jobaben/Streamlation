@@ -33,7 +33,9 @@ func TestSessionStatusHandler_WebSocketUpgradeAndEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to dial server: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef"))
 	request := fmt.Sprintf("GET /sessions/session123/events HTTP/1.1\r\nHost: %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", server.Listener.Addr().String(), key)
