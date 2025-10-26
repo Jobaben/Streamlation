@@ -14,6 +14,7 @@ import (
 
 	postgres "streamlation/packages/backend/postgres"
 	queuepkg "streamlation/packages/backend/queue"
+	statuspkg "streamlation/packages/backend/status"
 
 	"go.uber.org/zap"
 )
@@ -54,12 +55,15 @@ func main() {
 
 	redisAddr := getRedisAddr()
 	enqueuer := queuepkg.NewRedisIngestionEnqueuer(redisAddr)
+	statusPublisher := statuspkg.NewRedisStatusPublisher(redisAddr)
+	statusSubscriber := statuspkg.NewRedisStatusSubscriber(redisAddr)
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthHandler(logger))
-	mux.HandleFunc("POST /sessions", createSessionHandler(sessionStore, enqueuer, logger))
+	mux.HandleFunc("POST /sessions", createSessionHandler(sessionStore, enqueuer, statusPublisher, logger))
 	mux.HandleFunc("GET /sessions", listSessionsHandler(sessionStore, logger))
 	mux.HandleFunc("GET /sessions/{id}", getSessionHandler(sessionStore, logger))
+	mux.HandleFunc("GET /sessions/{id}/events", sessionStatusHandler(statusSubscriber, logger))
 
 	server := &http.Server{
 		Addr:              addr,
