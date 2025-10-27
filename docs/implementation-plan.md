@@ -31,8 +31,8 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 
 ## Phase 2: MVP Translation Pipeline (Weeks 4-8)
 
-> **Progress checkpoint (2025-10-25):** In-memory session creation and retrieval APIs are merged. The next pick-up point is persisting
-> session metadata to Postgres and wiring the handlers to enqueue work for the ingestion pipeline.
+> **Progress checkpoint (2025-10-26):** Session persistence now targets Postgres and the API enqueues ingestion jobs after
+> registration. The next pick-up point is wiring WebSocket session status updates from Redis-backed worker progress events.
 
 **Objectives**
 
@@ -56,7 +56,7 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 - **Session Control APIs**
   - ✅ `POST /sessions` validates payloads against shared schema expectations and registers sessions in memory for MVP coordination.
   - ✅ `GET /sessions/{id}` retrieves stored session configurations for downstream pipeline stages.
-  - ⏭️ Persist sessions to Postgres and emit ingestion jobs so the worker can start pulling media for translation.
+  - ✅ Persist sessions to Postgres and emit ingestion jobs so the worker can start pulling media for translation.
   - ⏭️ Add WebSocket session status updates surfaced from Redis-backed worker progress events.
 
 **Exit Criteria**
