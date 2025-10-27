@@ -54,7 +54,17 @@ func TestIngestionProcessorProcessesJob(t *testing.T) {
 		return nil
 	}}
 
-	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, logger: logger}
+	pipeline := &stubPipeline{runFunc: func(ctx context.Context, session sessionpkg.TranslationSession, emit func(statuspkg.SessionStatusEvent) error) error {
+		if session.ID != "job-1" {
+			t.Fatalf("unexpected session passed to pipeline: %s", session.ID)
+		}
+		if err := emit(statuspkg.SessionStatusEvent{SessionID: session.ID, Stage: "media", State: "normalizing"}); err != nil {
+			return err
+		}
+		return emit(statuspkg.SessionStatusEvent{SessionID: session.ID, Stage: "translation", State: "generating"})
+	}}
+
+	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, pipeline: pipeline, logger: logger}
 
 	done := make(chan struct{})
 	go func() {
@@ -74,14 +84,20 @@ func TestIngestionProcessorProcessesJob(t *testing.T) {
 	cancel()
 	<-done
 
-	if len(events) != 2 {
-		t.Fatalf("expected two status events, got %d", len(events))
+	if len(events) != 4 {
+		t.Fatalf("expected four status events, got %d", len(events))
 	}
 	if events[0].State != "dequeued" || events[0].Stage != "ingestion" {
 		t.Fatalf("unexpected first event: %#v", events[0])
 	}
 	if events[1].State != "ready" || events[1].Stage != "ingestion" {
 		t.Fatalf("unexpected second event: %#v", events[1])
+	}
+	if events[2].Stage != "media" || events[2].State != "normalizing" {
+		t.Fatalf("unexpected third event: %#v", events[2])
+	}
+	if events[3].Stage != "translation" || events[3].State != "generating" {
+		t.Fatalf("unexpected fourth event: %#v", events[3])
 	}
 }
 
@@ -108,7 +124,11 @@ func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
 		return nil
 	}}
 
-	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, logger: logger}
+	pipeline := &stubPipeline{runFunc: func(context.Context, sessionpkg.TranslationSession, func(statuspkg.SessionStatusEvent) error) error {
+		return nil
+	}}
+
+	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, pipeline: pipeline, logger: logger}
 
 	done := make(chan struct{})
 	go func() {
@@ -176,6 +196,17 @@ type stubStatusPublisher struct {
 func (s *stubStatusPublisher) Publish(ctx context.Context, event statuspkg.SessionStatusEvent) error {
 	if s.publishFunc != nil {
 		return s.publishFunc(ctx, event)
+	}
+	return nil
+}
+
+type stubPipeline struct {
+	runFunc func(context.Context, sessionpkg.TranslationSession, func(statuspkg.SessionStatusEvent) error) error
+}
+
+func (s *stubPipeline) Run(ctx context.Context, session sessionpkg.TranslationSession, emit func(statuspkg.SessionStatusEvent) error) error {
+	if s.runFunc != nil {
+		return s.runFunc(ctx, session, emit)
 	}
 	return nil
 }

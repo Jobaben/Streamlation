@@ -31,8 +31,8 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 
 ## Phase 2: MVP Translation Pipeline (Weeks 4-8)
 
-> **Progress checkpoint (2025-10-26):** Session persistence now targets Postgres and the API enqueues ingestion jobs after
-> registration. The next pick-up point is wiring WebSocket session status updates from Redis-backed worker progress events.
+> **Progress checkpoint (2025-10-27):** Real-time status streaming now surfaces worker progress events through the API WebSocket.
+> The next pick-up point is introducing ingestion adapters and audio normalization scaffolding to feed the downstream pipeline.
 
 **Objectives**
 
@@ -57,7 +57,8 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
   - ✅ `POST /sessions` validates payloads against shared schema expectations and registers sessions in memory for MVP coordination.
   - ✅ `GET /sessions/{id}` retrieves stored session configurations for downstream pipeline stages.
   - ✅ Persist sessions to Postgres and emit ingestion jobs so the worker can start pulling media for translation.
-  - ⏭️ Add WebSocket session status updates surfaced from Redis-backed worker progress events.
+  - ✅ Add WebSocket session status updates surfaced from Redis-backed worker progress events.
+  - ⏭️ Implement media ingestion adapters and audio normalization stubs that hand off work to the ASR stage.
 
 **Exit Criteria**
 
