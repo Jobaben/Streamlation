@@ -28,7 +28,7 @@ type stubIngestor struct {
 	got sessionpkg.TranslationSession
 }
 
-func (s *stubIngestor) Ingest(ctx context.Context, session sessionpkg.TranslationSession) error {
+func (s *stubIngestor) Ingest(_ context.Context, session sessionpkg.TranslationSession) error {
 	s.got = session
 	return s.err
 }
