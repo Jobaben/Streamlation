@@ -1,3 +1,4 @@
+// Package main provides the ingestion worker entrypoint.
 package main
 
 import (
@@ -124,6 +125,7 @@ func newLogger() *zap.SugaredLogger {
 type noopIngestor struct{}
 
 func (n *noopIngestor) Ingest(ctx context.Context, session sessionpkg.TranslationSession) error {
+	_ = session
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
