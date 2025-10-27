@@ -334,20 +334,61 @@ export default function HomePage(): JSX.Element {
   };
 
   return (
-    <main>
+    <main className="app-shell">
+      <div className="ambient-orbit" aria-hidden="true" />
       <header className="page-header">
-        <h1>Streamlation session coordinator</h1>
-        <p>
-          Register translation sessions with the Go API, persist them to Postgres,
-          and queue ingestion jobs through Redis. This UI mirrors the milestones
-          called out in the implementation plan to validate the MVP pipeline end
-          to end.
-        </p>
-        <p>
-          Explore the <Link href="https://github.com/golang/go/wiki/Modules">Go
-          modules guide</Link> or review the implementation plan in the docs
-          directory to dive deeper into sequencing decisions.
-        </p>
+        <div className="hero-intro">
+          <span className="hero-badge">Orchestrate your streaming translations</span>
+          <h1>Streamlation session coordinator</h1>
+          <p>
+            Register translation sessions with the Go API, persist them to Postgres,
+            and dispatch ingestion jobs through Redis&mdash;all from a single,
+            responsive hub.
+          </p>
+          <ul className="hero-highlights" role="list">
+            <li>
+              <span className="highlight-accent" aria-hidden="true" />
+              Edge-ready API integration with instant validation feedback.
+            </li>
+            <li>
+              <span className="highlight-accent" aria-hidden="true" />
+              Accessibility-aware interactions that honour reduced motion
+              preferences.
+            </li>
+            <li>
+              <span className="highlight-accent" aria-hidden="true" />
+              Live worker telemetry streamed in real time for quick observability.
+            </li>
+          </ul>
+          <p>
+            Explore the <Link href="https://github.com/golang/go/wiki/Modules">Go
+            modules guide</Link> or review the implementation plan in the docs
+            directory to dive deeper into sequencing decisions.
+          </p>
+        </div>
+        <aside className="hero-panels" aria-hidden="true">
+          <div className="hero-panel">
+            <h3>Adaptive ingest</h3>
+            <p>
+              Configure model profiles, latency budgets, and dubbing preferences
+              that flex with your stream requirements.
+            </p>
+          </div>
+          <div className="hero-panel">
+            <h3>Observability first</h3>
+            <p>
+              Monitor worker stages as they happen with a resilient WebSocket
+              channel and graceful fallbacks.
+            </p>
+          </div>
+          <div className="hero-panel">
+            <h3>Ready for production</h3>
+            <p>
+              Built for dark environments with high contrast, keyboard-friendly
+              controls, and delightful micro interactions.
+            </p>
+          </div>
+        </aside>
       </header>
 
       <section>
@@ -358,7 +399,11 @@ export default function HomePage(): JSX.Element {
           queue.
         </p>
         {statusMessage ? (
-          <div className={`status-message ${statusMessage.type}`}>
+          <div
+            className={`status-message ${statusMessage.type}`}
+            role="status"
+            aria-live="polite"
+          >
             {statusMessage.text}
           </div>
         ) : null}
@@ -638,7 +683,7 @@ export default function HomePage(): JSX.Element {
             Select a session above to open a live status stream.
           </p>
         )}
-        <div className="connection-status">
+        <div className="connection-status" aria-live="polite">
           <span className={`connection-pill ${connectionState}`}>
             {connectionLabel(connectionState)}
           </span>
