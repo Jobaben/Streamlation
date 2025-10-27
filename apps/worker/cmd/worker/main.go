@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	pipelinepkg "streamlation/packages/backend/pipeline"
 	postgres "streamlation/packages/backend/postgres"
 	queuepkg "streamlation/packages/backend/queue"
 	sessionpkg "streamlation/packages/backend/session"
@@ -52,10 +53,19 @@ func main() {
 	consumer := queuepkg.NewRedisIngestionConsumer(redisAddr)
 	statusPublisher := statuspkg.NewRedisStatusPublisher(redisAddr)
 
+	pipeline := pipelinepkg.NewSequentialStub([]pipelinepkg.Step{
+		{Stage: "ingestion", State: "buffering", Detail: "fetching stream metadata"},
+		{Stage: "media", State: "normalizing", Detail: "standardizing audio"},
+		{Stage: "asr", State: "processing", Detail: "transcribing audio chunks"},
+		{Stage: "translation", State: "generating", Detail: "producing target language captions"},
+		{Stage: "output", State: "rendering", Detail: "assembling subtitle artifacts"},
+	})
+
 	processor := &ingestionProcessor{
 		store:     store,
 		consumer:  consumer,
 		publisher: statusPublisher,
+		pipeline:  pipeline,
 		logger:    logger,
 	}
 
@@ -96,6 +106,7 @@ type ingestionProcessor struct {
 	store     sessionStore
 	consumer  ingestionConsumer
 	publisher statusPublisher
+	pipeline  pipelinepkg.Runner
 	logger    *zap.SugaredLogger
 }
 
@@ -120,7 +131,7 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 			continue
 		}
 
-		p.publish(ctx, statuspkg.SessionStatusEvent{
+		_ = p.publish(ctx, statuspkg.SessionStatusEvent{
 			SessionID: job.SessionID,
 			Stage:     "ingestion",
 			State:     "dequeued",
@@ -131,7 +142,7 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 		if err != nil {
 			if errors.Is(err, postgres.ErrSessionNotFound) {
 				p.logger.Warnw("session not found for ingestion job", "sessionID", job.SessionID)
-				p.publish(ctx, statuspkg.SessionStatusEvent{
+				_ = p.publish(ctx, statuspkg.SessionStatusEvent{
 					SessionID: job.SessionID,
 					Stage:     "session",
 					State:     "not_found",
@@ -143,7 +154,7 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 				return
 			}
 			p.logger.Errorw("failed to load session for ingestion job", "error", err, "sessionID", job.SessionID)
-			p.publish(ctx, statuspkg.SessionStatusEvent{
+			_ = p.publish(ctx, statuspkg.SessionStatusEvent{
 				SessionID: job.SessionID,
 				Stage:     "ingestion",
 				State:     "error",
@@ -152,7 +163,7 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 			continue
 		}
 
-		p.publish(ctx, statuspkg.SessionStatusEvent{
+		_ = p.publish(ctx, statuspkg.SessionStatusEvent{
 			SessionID: session.ID,
 			Stage:     "ingestion",
 			State:     "ready",
@@ -160,6 +171,23 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 		})
 
 		p.logger.Infow("ingestion job ready", "sessionID", session.ID, "sourceType", session.Source.Type, "sourceURI", session.Source.URI, "targetLanguage", session.TargetLanguage)
+
+		if p.pipeline != nil {
+			if err := p.pipeline.Run(ctx, session, func(event statuspkg.SessionStatusEvent) error {
+				return p.publish(ctx, event)
+			}); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				p.logger.Errorw("pipeline execution failed", "error", err, "sessionID", session.ID)
+				_ = p.publish(ctx, statuspkg.SessionStatusEvent{
+					SessionID: session.ID,
+					Stage:     "pipeline",
+					State:     "error",
+					Detail:    err.Error(),
+				})
+			}
+		}
 	}
 }
 
@@ -167,16 +195,18 @@ type statusPublisher interface {
 	Publish(ctx context.Context, event statuspkg.SessionStatusEvent) error
 }
 
-func (p *ingestionProcessor) publish(ctx context.Context, event statuspkg.SessionStatusEvent) {
+func (p *ingestionProcessor) publish(ctx context.Context, event statuspkg.SessionStatusEvent) error {
 	if p.publisher == nil {
-		return
+		return nil
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
 	}
 	if err := p.publisher.Publish(ctx, event); err != nil {
 		p.logger.Errorw("failed to publish status event", "error", err, "sessionID", event.SessionID, "stage", event.Stage, "state", event.State)
+		return err
 	}
+	return nil
 }
 
 func newLogger() *zap.SugaredLogger {
