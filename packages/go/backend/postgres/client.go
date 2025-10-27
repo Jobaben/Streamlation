@@ -367,39 +367,107 @@ func prepareQuery(query string, args ...any) (string, error) {
 	}
 
 	var b strings.Builder
-	for i := 0; i < len(query); i++ {
+	for i := 0; i < len(query); {
 		ch := query[i]
-		if ch != '$' {
+
+		switch ch {
+		case '\'':
+			start := i
+			i++
+			for i < len(query) {
+				if query[i] != '\'' {
+					i++
+					continue
+				}
+				i++
+				if i < len(query) && query[i] == '\'' {
+					i++
+					continue
+				}
+				break
+			}
+			if i > len(query) {
+				i = len(query)
+			}
+			b.WriteString(query[start:i])
+			continue
+		case '$':
+			if tag, ok := readDollarTag(query, i); ok {
+				start := i
+				bodyStart := i + len(tag)
+				closingOffset := strings.Index(query[bodyStart:], tag)
+				if closingOffset == -1 {
+					b.WriteString(query[start:])
+					return b.String(), nil
+				}
+				end := bodyStart + closingOffset + len(tag)
+				b.WriteString(query[start:end])
+				i = end
+				continue
+			}
+
+			j := i + 1
+			for j < len(query) && query[j] >= '0' && query[j] <= '9' {
+				j++
+			}
+			if j == i+1 {
+				b.WriteByte(ch)
+				i++
+				continue
+			}
+
+			idx, err := strconv.Atoi(query[i+1 : j])
+			if err != nil {
+				return "", fmt.Errorf("invalid placeholder %q: %w", query[i:j], err)
+			}
+			if idx <= 0 || idx > len(args) {
+				return "", fmt.Errorf("missing parameter for $%d", idx)
+			}
+
+			encoded, err := encodeParam(args[idx-1])
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(encoded)
+			i = j
+			continue
+		default:
 			b.WriteByte(ch)
+			i++
 			continue
 		}
-
-		j := i + 1
-		for j < len(query) && query[j] >= '0' && query[j] <= '9' {
-			j++
-		}
-		if j == i+1 {
-			b.WriteByte(ch)
-			continue
-		}
-
-		idx, err := strconv.Atoi(query[i+1 : j])
-		if err != nil {
-			return "", fmt.Errorf("invalid placeholder %q: %w", query[i:j], err)
-		}
-		if idx <= 0 || idx > len(args) {
-			return "", fmt.Errorf("missing parameter for $%d", idx)
-		}
-
-		encoded, err := encodeParam(args[idx-1])
-		if err != nil {
-			return "", err
-		}
-		b.WriteString(encoded)
-		i = j - 1
 	}
 
 	return b.String(), nil
+}
+
+func readDollarTag(query string, start int) (string, bool) {
+	if start >= len(query) || query[start] != '$' {
+		return "", false
+	}
+
+	j := start + 1
+	for j < len(query) && isDollarTagChar(query[j]) {
+		j++
+	}
+	if j >= len(query) || query[j] != '$' {
+		return "", false
+	}
+
+	return query[start : j+1], true
+}
+
+func isDollarTagChar(ch byte) bool {
+	if ch >= '0' && ch <= '9' {
+		return true
+	}
+	if ch >= 'a' && ch <= 'z' {
+		return true
+	}
+	if ch >= 'A' && ch <= 'Z' {
+		return true
+	}
+	return ch == '_'
 }
 
 func encodeParam(arg any) (string, error) {
