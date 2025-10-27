@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -276,28 +278,190 @@ func (c *Client) discardUntilReady(ctx context.Context) error {
 	}
 }
 
-func (c *Client) Exec(ctx context.Context, query string) error {
-	_, err := c.simpleQuery(ctx, query)
+func (c *Client) Exec(ctx context.Context, query string, args ...any) error {
+	prepared, err := prepareQuery(query, args...)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.simpleQuery(ctx, prepared)
 	return err
 }
 
-func (c *Client) QueryRow(ctx context.Context, query string) ([]string, error) {
-	res, err := c.simpleQuery(ctx, query)
+func (c *Client) QueryRow(ctx context.Context, query string, args ...any) row {
+	prepared, err := prepareQuery(query, args...)
 	if err != nil {
-		return nil, err
+		return simpleRow{err: err}
+	}
+
+	res, err := c.simpleQuery(ctx, prepared)
+	if err != nil {
+		return simpleRow{err: err}
 	}
 	if len(res.rows) == 0 {
-		return nil, nil
+		return simpleRow{err: sql.ErrNoRows}
 	}
-	return res.rows[0], nil
+	return simpleRow{values: res.rows[0]}
 }
 
-func (c *Client) Query(ctx context.Context, query string) ([][]string, error) {
-	res, err := c.simpleQuery(ctx, query)
+func (c *Client) Query(ctx context.Context, query string, args ...any) (rows, error) {
+	prepared, err := prepareQuery(query, args...)
 	if err != nil {
 		return nil, err
 	}
-	return res.rows, nil
+
+	res, err := c.simpleQuery(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+
+	return &simpleRows{rows: res.rows}, nil
+}
+
+type simpleRow struct {
+	values []string
+	err    error
+}
+
+func (r simpleRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	return assignValues(r.values, dest...)
+}
+
+type simpleRows struct {
+	rows [][]string
+	idx  int
+	err  error
+}
+
+func (r *simpleRows) Close() {}
+
+func (r *simpleRows) Err() error {
+	return r.err
+}
+
+func (r *simpleRows) Next() bool {
+	if r.idx >= len(r.rows) {
+		return false
+	}
+	r.idx++
+	return true
+}
+
+func (r *simpleRows) Scan(dest ...any) error {
+	if r.idx == 0 || r.idx > len(r.rows) {
+		return errors.New("scan called out of sequence")
+	}
+	if err := assignValues(r.rows[r.idx-1], dest...); err != nil {
+		r.err = err
+		return err
+	}
+	return nil
+}
+
+func prepareQuery(query string, args ...any) (string, error) {
+	if len(args) == 0 {
+		return query, nil
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch != '$' {
+			b.WriteByte(ch)
+			continue
+		}
+
+		j := i + 1
+		for j < len(query) && query[j] >= '0' && query[j] <= '9' {
+			j++
+		}
+		if j == i+1 {
+			b.WriteByte(ch)
+			continue
+		}
+
+		idx, err := strconv.Atoi(query[i+1 : j])
+		if err != nil {
+			return "", fmt.Errorf("invalid placeholder %q: %w", query[i:j], err)
+		}
+		if idx <= 0 || idx > len(args) {
+			return "", fmt.Errorf("missing parameter for $%d", idx)
+		}
+
+		encoded, err := encodeParam(args[idx-1])
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(encoded)
+		i = j - 1
+	}
+
+	return b.String(), nil
+}
+
+func encodeParam(arg any) (string, error) {
+	switch v := arg.(type) {
+	case string:
+		return "'" + strings.ReplaceAll(v, "'", "''") + "'", nil
+	case []byte:
+		return "'" + strings.ReplaceAll(string(v), "'", "''") + "'", nil
+	case bool:
+		if v {
+			return "TRUE", nil
+		}
+		return "FALSE", nil
+	case int:
+		return strconv.Itoa(v), nil
+	case int32:
+		return strconv.FormatInt(int64(v), 10), nil
+	case int64:
+		return strconv.FormatInt(v, 10), nil
+	default:
+		return "", fmt.Errorf("unsupported parameter type %T", arg)
+	}
+}
+
+func assignValues(values []string, dest ...any) error {
+	if len(values) != len(dest) {
+		return fmt.Errorf("column count mismatch: have %d values, want %d", len(values), len(dest))
+	}
+
+	for i, d := range dest {
+		switch ptr := d.(type) {
+		case *string:
+			*ptr = values[i]
+		case *bool:
+			*ptr = parseBoolLiteral(values[i])
+		case *int32:
+			n, err := strconv.Atoi(values[i])
+			if err != nil {
+				return fmt.Errorf("invalid integer value: %w", err)
+			}
+			*ptr = int32(n)
+		case *int:
+			n, err := strconv.Atoi(values[i])
+			if err != nil {
+				return fmt.Errorf("invalid integer value: %w", err)
+			}
+			*ptr = n
+		default:
+			return fmt.Errorf("unsupported scan destination %T", d)
+		}
+	}
+
+	return nil
+}
+
+func parseBoolLiteral(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "t", "true", "1", "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) Close() error {
