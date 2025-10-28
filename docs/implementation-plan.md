@@ -18,9 +18,10 @@ This snapshot informs the phase updates below by grounding planned work against 
 
 1. **Storage and Data Safety** – The custom Postgres executor concatenates SQL literals and returns raw string slices. Introduce a battle-tested driver such as `jackc/pgx` (or at minimum parameterized statements) plus migration tooling to avoid injection risks, encoding bugs, and schema drift. Elevate row decoding to strongly typed structs and centralize connection pooling.
 2. **Queue & Streaming Resilience** – Redis access is implemented via handcrafted RESP writers/readers without reconnection, authentication, or backpressure controls. Wrap these helpers behind an interface backed by a resilient client (e.g., `redis/go-redis`) and layer in circuit breakers, tracing, and health probes so ingestion pressure does not stall the worker.
-3. **Pipeline Orchestration** – The worker executes the sequential stub inline, blocking ingestion while emitting events. Promote a coroutine-per-session model with cancellable contexts, stage timeouts, and an event-sourced state machine so ASR/translation stages can run in parallel once real models arrive.
-4. **Observability & QA Depth** – Expand structured logging, metrics, and tracing across API and worker boundaries. Add golden integration tests that boot ephemeral Postgres/Redis containers, validate schema migrations, and assert end-to-end queue-to-websocket delivery to guard against protocol regressions.
-5. **Frontend Feedback Loop** – The dashboard polls REST endpoints for history and listens to WebSockets for live status, but it does not surface retry/error states. Introduce Suspense-friendly data hooks, optimistic updates for session registration, and instrumentation for websocket disconnects to close the operator loop.
+3. **Pipeline Orchestration** – The worker executes the sequential stub inline, blocking ingestion while emitting events. Promote a coroutine-per-session model with cancellable contexts, stage timeouts, and an event-sourced state machine so ASR/translation stages can run in parallel once real models arrive. The current loop pops a job and fully processes it before touching the next `BRPOP`, so the worker can never overlap ingest or ASR for different sessions even though the Redis queue might be full.
+4. **Async IO & Backpressure** – Redis interactions hand-roll RESP commands and open a brand new TCP connection for every `LPUSH`, `BRPOP`, and `PUBLISH`, preventing connection reuse or pipelining. Replace these single-flight calls with pooled clients that can multiplex requests, stream pub/sub messages, and expose buffer pressure so the API can shed load instead of blocking request handlers.
+5. **Observability & QA Depth** – Expand structured logging, metrics, and tracing across API and worker boundaries. Add golden integration tests that boot ephemeral Postgres/Redis containers, validate schema migrations, and assert end-to-end queue-to-websocket delivery to guard against protocol regressions.
+6. **Frontend Feedback Loop** – The dashboard polls REST endpoints for history and listens to WebSockets for live status, but it does not surface retry/error states. Introduce Suspense-friendly data hooks, optimistic updates for session registration, and instrumentation for websocket disconnects to close the operator loop.
 
 These updates are reflected in the phase adjustments below.
 
@@ -61,7 +62,7 @@ These updates are reflected in the phase adjustments below.
 > - ✅ Covered today: Session CRUD, manual Postgres executor, handcrafted Redis queue/publish helpers, sequential pipeline stub, and the operator dashboard for creation + monitoring.
 > - 🆕 Requires updates: Persistence hardening (`pgx` or equivalent), managed Redis client integration, pipeline parallelism/backpressure, OpenTelemetry traces/metrics, ingestion adapters, media normalization, AI runners, subtitle generation, and enhanced UI feedback states.
 >
-> **Next Focus:** Harden the persistence/queue layers while implementing real ingestion adapters, audio normalization, ASR/translation runners, and subtitle generation so pipeline events reflect actual media progress instead of stubbed stages.
+> **Next Focus:** Harden the persistence/queue layers while implementing real ingestion adapters, audio normalization, ASR/translation runners, and subtitle generation so pipeline events reflect actual media progress instead of stubbed stages. Prioritize asynchronous orchestration so multiple sessions can progress concurrently without blocking the ingestion loop.
 
 **Objectives**
 
@@ -76,6 +77,10 @@ These updates are reflected in the phase adjustments below.
   - 🆕 Wrap FFmpeg/libav in `services/media/` to normalize audio to 16 kHz mono PCM chunks, tagging each frame with presentation timestamps and waveform statistics for downstream VAD.
   - 🆕 Introduce a `ChunkLedger` abstraction that records enqueue/dequeue offsets in Postgres so retries resume idempotently after worker restarts.
   - 🆕 Use `hibiken/asynq` (or Temporal/Argo Workflows if GPU orchestration demands) to parallelize ASR → translation tasks, persisting deterministic stage transitions in Postgres and caching transient state in Redis.
+- **Pipeline Orchestration & Async Coordination**
+  - 🆕 Spin up a worker pool that pulls jobs concurrently, launching a goroutine per session with bounded concurrency and context cancellation so long-running ASR does not starve new ingests.
+  - 🆕 Decouple status publication from hot paths by buffering events onto an internal channel serviced by dedicated publishers that can batch or drop on overload.
+  - 🆕 Stream Redis pub/sub events via long-lived connections managed by health-checked pools, exposing an async iterator interface for WebSocket handlers and frontend consumers.
 - **AI Services**
   - 🆕 Evaluate Whisper variants vs. alternatives; document selection in `docs/asr-selection.md` and implement GPU-aware loading with CPU fallbacks.
   - 🆕 Package MarianMT/Bergamot models per language pair with configurable latency vs. accuracy presets, and introduce a pluggable translation interface that supports batching for throughput gains.
@@ -99,6 +104,7 @@ These updates are reflected in the phase adjustments below.
 **Exit Criteria**
 
 - 🆕 Demonstrable live session translating audio to subtitles with acceptable latency targets.
+- 🆕 Multiple concurrent sessions advance through ingestion, ASR, and translation without head-of-line blocking or dropped status updates under nominal load.
 - 🆕 Operator UI controlling session lifecycle and language selection backed by authenticated REST/WebSocket APIs.
 - 🆕 Integration tests covering ingestion through subtitle delivery pass reliably in CI.
 
