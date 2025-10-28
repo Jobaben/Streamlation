@@ -137,7 +137,12 @@ export default function HomePage(): JSX.Element {
   const [statusEvents, setStatusEvents] = useState<SessionStatusEvent[]>([]);
   const [connectionState, setConnectionState] = useState<ConnectionState>("idle");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [reconnectSignal, setReconnectSignal] = useState(0);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [nextRetryAt, setNextRetryAt] = useState<number | null>(null);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const retryAttemptRef = useRef(0);
 
   const selectedSession = useMemo(() => {
     if (!selectedSessionId) {
@@ -173,80 +178,157 @@ export default function HomePage(): JSX.Element {
   }, [loadSessions]);
 
   useEffect(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-
-    setStatusEvents([]);
     setConnectionError(null);
+    setRetryAttempt(0);
+    setNextRetryAt(null);
+    retryAttemptRef.current = 0;
 
     if (!selectedSessionId) {
       setConnectionState("idle");
-      return;
+      return () => {
+        if (wsRef.current) {
+          wsRef.current.close();
+          wsRef.current = null;
+        }
+      };
     }
 
     const url = buildWebSocketURL(`/sessions/${encodeURIComponent(selectedSessionId)}/events`);
     setConnectionState("connecting");
 
     let isUnmounted = false;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let reconnectScheduled = false;
 
-    try {
-      const socket = new WebSocket(url);
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        if (!isUnmounted) {
-          setConnectionState("open");
-        }
-      };
-
-      socket.onclose = () => {
-        if (!isUnmounted) {
-          setConnectionState("closed");
-        }
-      };
-
-      socket.onerror = () => {
-        if (!isUnmounted) {
-          setConnectionState("error");
-          setConnectionError("Unable to maintain session status stream.");
-        }
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data) as Partial<SessionStatusEvent>;
-          const normalized: SessionStatusEvent = {
-            sessionId: payload.sessionId ?? selectedSessionId,
-            stage: payload.stage ?? "unknown",
-            state: payload.state ?? "unknown",
-            detail: payload.detail ?? undefined,
-            timestamp:
-              payload.timestamp ?? new Date().toISOString()
-          };
-          setStatusEvents((prev) => [normalized, ...prev].slice(0, 50));
-        } catch (error) {
-          console.error("Failed to parse status event", error);
-        }
-      };
-    } catch (error) {
-      setConnectionState("error");
-      setConnectionError(
-        error instanceof Error
-          ? error.message
-          : "Failed to connect to status stream."
-      );
-    }
-
-    return () => {
-      isUnmounted = true;
+    const cleanupSocket = () => {
       if (wsRef.current) {
+        wsRef.current.onopen = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, [selectedSessionId]);
+
+    const scheduleReconnect = () => {
+      if (isUnmounted || reconnectScheduled) {
+        return;
+      }
+      reconnectScheduled = true;
+      retryAttemptRef.current += 1;
+      const delay = Math.min(30000, 1000 * 2 ** (retryAttemptRef.current - 1));
+      setRetryAttempt(retryAttemptRef.current);
+      setNextRetryAt(Date.now() + delay);
+      setConnectionError("Connection interrupted. Retrying automatically.");
+      reconnectTimeout = setTimeout(() => {
+        if (isUnmounted) {
+          return;
+        }
+        reconnectScheduled = false;
+        setNextRetryAt(null);
+        setConnectionError(null);
+        connect();
+      }, delay);
+    };
+
+    const connect = () => {
+      cleanupSocket();
+      setConnectionState("connecting");
+
+      try {
+        const socket = new WebSocket(url);
+        wsRef.current = socket;
+
+        socket.onopen = () => {
+          if (isUnmounted) {
+            return;
+          }
+          retryAttemptRef.current = 0;
+          setRetryAttempt(0);
+          setNextRetryAt(null);
+          setConnectionError(null);
+          setConnectionState("open");
+        };
+
+        socket.onclose = () => {
+          if (isUnmounted) {
+            return;
+          }
+          setConnectionState("closed");
+          scheduleReconnect();
+        };
+
+        socket.onerror = () => {
+          if (isUnmounted) {
+            return;
+          }
+          setConnectionState("error");
+          scheduleReconnect();
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data) as Partial<SessionStatusEvent>;
+            const normalized: SessionStatusEvent = {
+              sessionId: payload.sessionId ?? selectedSessionId,
+              stage: payload.stage ?? "unknown",
+              state: payload.state ?? "unknown",
+              detail: payload.detail ?? undefined,
+              timestamp:
+                payload.timestamp ?? new Date().toISOString()
+            };
+            setStatusEvents((prev) => [normalized, ...prev].slice(0, 50));
+          } catch (error) {
+            console.error("Failed to parse status event", error);
+          }
+        };
+      } catch (error) {
+        if (isUnmounted) {
+          return;
+        }
+        setConnectionState("error");
+        setConnectionError(
+          error instanceof Error
+            ? error.message
+            : "Failed to connect to status stream."
+        );
+        scheduleReconnect();
+      }
+    };
+
+    connect();
+
+    return () => {
+      isUnmounted = true;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      cleanupSocket();
+    };
+  }, [selectedSessionId, reconnectSignal]);
+
+  useEffect(() => {
+    if (nextRetryAt === null) {
+      setRetryCountdown(null);
+      return;
+    }
+
+    const updateCountdown = () => {
+      const remainingMs = nextRetryAt - Date.now();
+      if (remainingMs <= 0) {
+        setRetryCountdown(0);
+        return;
+      }
+      setRetryCountdown(Math.ceil(remainingMs / 1000));
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 500);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [nextRetryAt]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -689,6 +771,25 @@ export default function HomePage(): JSX.Element {
           </span>
           {connectionError ? (
             <span className="connection-error">{connectionError}</span>
+          ) : null}
+          {retryAttempt > 0 && nextRetryAt !== null ? (
+            <span className="connection-retry">
+              Retrying in {retryCountdown ?? 0}s (attempt {retryAttempt + 1})
+            </span>
+          ) : null}
+          {retryAttempt > 0 && connectionState !== "open" ? (
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() => {
+                setNextRetryAt(null);
+                setRetryCountdown(null);
+                setConnectionError(null);
+                setReconnectSignal((value) => value + 1);
+              }}
+            >
+              Retry now
+            </button>
           ) : null}
         </div>
         {statusEvents.length === 0 ? (
