@@ -2,19 +2,43 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"fmt"
-	"strconv"
-	"strings"
 
 	sessionpkg "streamlation/packages/backend/session"
 )
 
-type executor interface {
-	Exec(ctx context.Context, query string) error
-	QueryRow(ctx context.Context, query string) ([]string, error)
-	Query(ctx context.Context, query string) ([][]string, error)
+type row interface {
+	Scan(dest ...any) error
 }
+
+type rows interface {
+	Close()
+	Err() error
+	Next() bool
+	Scan(dest ...any) error
+}
+
+type executor interface {
+	Exec(ctx context.Context, query string, args ...any) error
+	QueryRow(ctx context.Context, query string, args ...any) row
+	Query(ctx context.Context, query string, args ...any) (rows, error)
+}
+
+const (
+	insertSessionSQL = `INSERT INTO translation_sessions (
+        id,
+        source_type,
+        source_uri,
+        target_language,
+        enable_dubbing,
+        latency_tolerance_ms,
+        model_profile
+) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	getSessionSQL    = `SELECT id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile FROM translation_sessions WHERE id = $1`
+	deleteSessionSQL = `DELETE FROM translation_sessions WHERE id = $1`
+	listSessionsSQL  = `SELECT id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile FROM translation_sessions ORDER BY created_at DESC LIMIT $1`
+)
 
 func NewSessionStore(client executor) *SessionStore {
 	return &SessionStore{client: client}
@@ -25,8 +49,16 @@ type SessionStore struct {
 }
 
 func (s *SessionStore) Create(ctx context.Context, session sessionpkg.TranslationSession) error {
-	query := buildInsertSessionQuery(session)
-	if err := s.client.Exec(ctx, query); err != nil {
+	err := s.client.Exec(ctx, insertSessionSQL,
+		session.ID,
+		session.Source.Type,
+		session.Source.URI,
+		session.TargetLanguage,
+		session.Options.EnableDubbing,
+		session.Options.LatencyToleranceMs,
+		session.Options.ModelProfile,
+	)
+	if err != nil {
 		var pgErr *Error
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return ErrSessionExists
@@ -37,78 +69,75 @@ func (s *SessionStore) Create(ctx context.Context, session sessionpkg.Translatio
 }
 
 func (s *SessionStore) Get(ctx context.Context, id string) (sessionpkg.TranslationSession, error) {
-	query := fmt.Sprintf("SELECT id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile FROM translation_sessions WHERE id = %s LIMIT 1", quoteLiteral(id))
-	row, err := s.client.QueryRow(ctx, query)
+	result, err := scanSession(s.client.QueryRow(ctx, getSessionSQL, id))
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sessionpkg.TranslationSession{}, ErrSessionNotFound
+		}
 		return sessionpkg.TranslationSession{}, err
 	}
-	if row == nil {
-		return sessionpkg.TranslationSession{}, ErrSessionNotFound
-	}
-
-	session, err := rowToSession(row)
-	if err != nil {
-		return sessionpkg.TranslationSession{}, err
-	}
-
-	return session, nil
+	return result, nil
 }
 
 func (s *SessionStore) Delete(ctx context.Context, id string) error {
-	query := fmt.Sprintf("DELETE FROM translation_sessions WHERE id = %s", quoteLiteral(id))
-	return s.client.Exec(ctx, query)
+	return s.client.Exec(ctx, deleteSessionSQL, id)
 }
 
-// List retrieves up to limit translation sessions ordered by creation time (newest first).
 func (s *SessionStore) List(ctx context.Context, limit int) ([]sessionpkg.TranslationSession, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	query := fmt.Sprintf("SELECT id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile FROM translation_sessions ORDER BY created_at DESC LIMIT %d", limit)
-	rows, err := s.client.Query(ctx, query)
+
+	rs, err := s.client.Query(ctx, listSessionsSQL, limit)
 	if err != nil {
 		return nil, err
 	}
+	defer rs.Close()
 
-	sessions := make([]sessionpkg.TranslationSession, 0, len(rows))
-	for _, row := range rows {
-		session, err := rowToSession(row)
+	sessions := make([]sessionpkg.TranslationSession, 0)
+	for rs.Next() {
+		session, err := scanSession(rs)
 		if err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, session)
 	}
 
+	if err := rs.Err(); err != nil {
+		return nil, err
+	}
+
 	return sessions, nil
 }
 
-func rowToSession(row []string) (sessionpkg.TranslationSession, error) {
-	if len(row) != 7 {
-		return sessionpkg.TranslationSession{}, fmt.Errorf("unexpected column count: %d", len(row))
+func scanSession(scanner interface{ Scan(dest ...any) error }) (sessionpkg.TranslationSession, error) {
+	var (
+		id             string
+		sourceType     string
+		sourceURI      string
+		targetLanguage string
+		enableDubbing  bool
+		latency        int32
+		modelProfile   string
+	)
+
+	if err := scanner.Scan(&id, &sourceType, &sourceURI, &targetLanguage, &enableDubbing, &latency, &modelProfile); err != nil {
+		return sessionpkg.TranslationSession{}, err
 	}
 
-	latency, err := strconv.Atoi(row[5])
-	if err != nil {
-		return sessionpkg.TranslationSession{}, fmt.Errorf("invalid latency value: %w", err)
-	}
-
-	enableDubbing := parseBool(row[4])
-
-	session := sessionpkg.TranslationSession{
-		ID: row[0],
+	return sessionpkg.TranslationSession{
+		ID: id,
 		Source: sessionpkg.TranslationSource{
-			Type: row[1],
-			URI:  row[2],
+			Type: sourceType,
+			URI:  sourceURI,
 		},
-		TargetLanguage: row[3],
+		TargetLanguage: targetLanguage,
 		Options: sessionpkg.TranslationOptions{
 			EnableDubbing:      enableDubbing,
-			LatencyToleranceMs: latency,
-			ModelProfile:       row[6],
+			LatencyToleranceMs: int(latency),
+			ModelProfile:       modelProfile,
 		},
-	}
-
-	return session, nil
+	}, nil
 }
 
 func EnsureSessionSchema(ctx context.Context, client executor) error {
@@ -125,48 +154,7 @@ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	return client.Exec(ctx, ddl)
 }
 
-func buildInsertSessionQuery(session sessionpkg.TranslationSession) string {
-	values := []string{
-		quoteLiteral(session.ID),
-		quoteLiteral(session.Source.Type),
-		quoteLiteral(session.Source.URI),
-		quoteLiteral(session.TargetLanguage),
-		boolLiteral(session.Options.EnableDubbing),
-		strconv.Itoa(session.Options.LatencyToleranceMs),
-		quoteLiteral(session.Options.ModelProfile),
-	}
-
-	return fmt.Sprintf(
-		"INSERT INTO translation_sessions (id, source_type, source_uri, target_language, enable_dubbing, latency_tolerance_ms, model_profile) VALUES (%s)",
-		strings.Join(values, ", "),
-	)
-}
-
-func quoteLiteral(value string) string {
-	escaped := strings.ReplaceAll(value, "'", "''")
-	return "'" + escaped + "'"
-}
-
-func boolLiteral(v bool) string {
-	if v {
-		return "TRUE"
-	}
-	return "FALSE"
-}
-
-func parseBool(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "t", "true", "1", "y", "yes":
-		return true
-	default:
-		return false
-	}
-}
-
 var (
-	// ErrSessionExists is returned when attempting to create a session that already exists.
-	ErrSessionExists = errors.New("session already exists")
-
-	// ErrSessionNotFound is returned when a session cannot be found in storage.
+	ErrSessionExists   = errors.New("session already exists")
 	ErrSessionNotFound = errors.New("session not found")
 )
