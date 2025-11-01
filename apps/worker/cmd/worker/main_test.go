@@ -25,6 +25,23 @@ func TestGetRedisAddrDefault(t *testing.T) {
 	}
 }
 
+func TestGetWorkerConcurrency(t *testing.T) {
+	t.Setenv("WORKER_MAX_CONCURRENCY", "")
+	if got := getWorkerConcurrency(); got != 4 {
+		t.Fatalf("expected default concurrency 4, got %d", got)
+	}
+
+	t.Setenv("WORKER_MAX_CONCURRENCY", "2")
+	if got := getWorkerConcurrency(); got != 2 {
+		t.Fatalf("expected overridden concurrency 2, got %d", got)
+	}
+
+	t.Setenv("WORKER_MAX_CONCURRENCY", "0")
+	if got := getWorkerConcurrency(); got != 4 {
+		t.Fatalf("expected fallback to default for non-positive values, got %d", got)
+	}
+}
+
 func TestIngestionProcessorProcessesJob(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -64,7 +81,7 @@ func TestIngestionProcessorProcessesJob(t *testing.T) {
 		return emit(statuspkg.SessionStatusEvent{SessionID: session.ID, Stage: "translation", State: "generating"})
 	}}
 
-	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, pipeline: pipeline, logger: logger}
+	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, pipeline: pipeline, logger: logger, maxConcurrent: 1}
 
 	done := make(chan struct{})
 	go func() {
@@ -128,7 +145,7 @@ func TestIngestionProcessorHandlesMissingSession(t *testing.T) {
 		return nil
 	}}
 
-	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, pipeline: pipeline, logger: logger}
+	processor := &ingestionProcessor{store: store, consumer: consumer, publisher: publisher, pipeline: pipeline, logger: logger, maxConcurrent: 1}
 
 	done := make(chan struct{})
 	go func() {
