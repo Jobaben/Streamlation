@@ -180,31 +180,19 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 
 func (p *ingestionProcessor) processJobs(ctx context.Context, jobs <-chan *queuepkg.IngestionJob) {
 	drainCtx := context.WithoutCancel(ctx)
-	jobCtx := ctx
 
 	for {
-		if jobCtx == ctx && ctx.Err() != nil {
-			jobCtx = drainCtx
-		}
-
 		select {
 		case job, ok := <-jobs:
 			if !ok {
 				return
 			}
-			p.handleJob(jobCtx, job)
+			p.handleJob(ctx, job)
 		case <-ctx.Done():
-			jobCtx = drainCtx
-
-			select {
-			case job, ok := <-jobs:
-				if !ok {
-					return
-				}
-				p.handleJob(jobCtx, job)
-			default:
-				return
+			for job := range jobs {
+				p.handleJob(drainCtx, job)
 			}
+			return
 		}
 	}
 }
