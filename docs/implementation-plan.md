@@ -225,7 +225,7 @@ These updates are reflected in the phase adjustments below.
 
 ### Phase 2
 
-- [ ] Ingestion adapters with automated tests for HLS and RTMP sample streams.
+- [x] Ingestion adapters with automated tests for HLS and RTMP sample streams.
 - [ ] Audio normalization service producing timestamped PCM chunks via Redis queues.
 - [ ] ASR + translation services with documented model selection and cached translations.
 - [ ] Subtitle generator delivering synchronized SRT/VTT outputs via WebSocket APIs.
