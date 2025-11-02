@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -62,11 +64,12 @@ func main() {
 	})
 
 	processor := &ingestionProcessor{
-		store:     store,
-		consumer:  consumer,
-		publisher: statusPublisher,
-		pipeline:  pipeline,
-		logger:    logger,
+		store:         store,
+		consumer:      consumer,
+		publisher:     statusPublisher,
+		pipeline:      pipeline,
+		logger:        logger,
+		maxConcurrent: getWorkerConcurrency(),
 	}
 
 	logger.Infow("worker starting")
@@ -94,6 +97,18 @@ func getRedisAddr() string {
 	return defaultRedisAddr
 }
 
+func getWorkerConcurrency() int {
+	raw := os.Getenv("WORKER_MAX_CONCURRENCY")
+	if raw == "" {
+		return 4
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 4
+	}
+	return value
+}
+
 type sessionStore interface {
 	Get(ctx context.Context, id string) (sessionpkg.TranslationSession, error)
 }
@@ -103,23 +118,47 @@ type ingestionConsumer interface {
 }
 
 type ingestionProcessor struct {
-	store     sessionStore
-	consumer  ingestionConsumer
-	publisher statusPublisher
-	pipeline  pipelinepkg.Runner
-	logger    *zap.SugaredLogger
+	store         sessionStore
+	consumer      ingestionConsumer
+	publisher     statusPublisher
+	pipeline      pipelinepkg.Runner
+	logger        *zap.SugaredLogger
+	maxConcurrent int
 }
 
 func (p *ingestionProcessor) Run(ctx context.Context) {
+	concurrency := p.maxConcurrent
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+
+	jobs := make(chan *queuepkg.IngestionJob, concurrency)
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.processJobs(workerCtx, jobs)
+		}()
+	}
+
+	defer func() {
+		close(jobs)
+		wg.Wait()
+	}()
+
 	for {
-		if ctx.Err() != nil {
+		if workerCtx.Err() != nil {
 			return
 		}
 
-		job, err := p.consumer.Pop(ctx, 5*time.Second)
+		job, err := p.consumer.Pop(workerCtx, 5*time.Second)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				if ctx.Err() != nil {
+				if workerCtx.Err() != nil {
 					return
 				}
 				continue
@@ -131,62 +170,93 @@ func (p *ingestionProcessor) Run(ctx context.Context) {
 			continue
 		}
 
+		select {
+		case jobs <- job:
+		case <-workerCtx.Done():
+			return
+		}
+	}
+}
+
+func (p *ingestionProcessor) processJobs(ctx context.Context, jobs <-chan *queuepkg.IngestionJob) {
+	drainCtx := context.WithoutCancel(ctx)
+
+	for {
+		select {
+		case job, ok := <-jobs:
+			if !ok {
+				return
+			}
+			p.handleJob(ctx, job)
+		case <-ctx.Done():
+			for job := range jobs {
+				p.handleJob(drainCtx, job)
+			}
+			return
+		}
+	}
+}
+
+func (p *ingestionProcessor) handleJob(ctx context.Context, job *queuepkg.IngestionJob) {
+	if job == nil {
+		return
+	}
+
+	_ = p.publish(ctx, statuspkg.SessionStatusEvent{
+		SessionID: job.SessionID,
+		Stage:     "ingestion",
+		State:     "dequeued",
+		Detail:    "ingestion job received",
+	})
+
+	session, err := p.store.Get(ctx, job.SessionID)
+	if err != nil {
+		if errors.Is(err, postgres.ErrSessionNotFound) {
+			p.logger.Warnw("session not found for ingestion job", "sessionID", job.SessionID)
+			_ = p.publish(ctx, statuspkg.SessionStatusEvent{
+				SessionID: job.SessionID,
+				Stage:     "session",
+				State:     "not_found",
+				Detail:    "session missing for ingestion job",
+			})
+			return
+		}
+		if errors.Is(err, context.Canceled) {
+			return
+		}
+		p.logger.Errorw("failed to load session for ingestion job", "error", err, "sessionID", job.SessionID)
 		_ = p.publish(ctx, statuspkg.SessionStatusEvent{
 			SessionID: job.SessionID,
 			Stage:     "ingestion",
-			State:     "dequeued",
-			Detail:    "ingestion job received",
+			State:     "error",
+			Detail:    "failed to load session metadata",
 		})
+		return
+	}
 
-		session, err := p.store.Get(ctx, job.SessionID)
-		if err != nil {
-			if errors.Is(err, postgres.ErrSessionNotFound) {
-				p.logger.Warnw("session not found for ingestion job", "sessionID", job.SessionID)
-				_ = p.publish(ctx, statuspkg.SessionStatusEvent{
-					SessionID: job.SessionID,
-					Stage:     "session",
-					State:     "not_found",
-					Detail:    "session missing for ingestion job",
-				})
-				continue
-			}
+	_ = p.publish(ctx, statuspkg.SessionStatusEvent{
+		SessionID: session.ID,
+		Stage:     "ingestion",
+		State:     "ready",
+		Detail:    "ingestion job ready",
+	})
+
+	p.logger.Infow("ingestion job ready", "sessionID", session.ID, "sourceType", session.Source.Type, "sourceURI", session.Source.URI, "targetLanguage", session.TargetLanguage)
+
+	if p.pipeline != nil {
+		if err := p.pipeline.Run(ctx, session, func(event statuspkg.SessionStatusEvent) error {
+			return p.publish(ctx, event)
+		}); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			p.logger.Errorw("failed to load session for ingestion job", "error", err, "sessionID", job.SessionID)
+			p.logger.Errorw("pipeline execution failed", "error", err, "sessionID", session.ID)
 			_ = p.publish(ctx, statuspkg.SessionStatusEvent{
-				SessionID: job.SessionID,
-				Stage:     "ingestion",
+				SessionID: session.ID,
+				Stage:     "pipeline",
 				State:     "error",
-				Detail:    "failed to load session metadata",
+				Detail:    err.Error(),
 			})
-			continue
-		}
-
-		_ = p.publish(ctx, statuspkg.SessionStatusEvent{
-			SessionID: session.ID,
-			Stage:     "ingestion",
-			State:     "ready",
-			Detail:    "ingestion job ready",
-		})
-
-		p.logger.Infow("ingestion job ready", "sessionID", session.ID, "sourceType", session.Source.Type, "sourceURI", session.Source.URI, "targetLanguage", session.TargetLanguage)
-
-		if p.pipeline != nil {
-			if err := p.pipeline.Run(ctx, session, func(event statuspkg.SessionStatusEvent) error {
-				return p.publish(ctx, event)
-			}); err != nil {
-				if errors.Is(err, context.Canceled) {
-					return
-				}
-				p.logger.Errorw("pipeline execution failed", "error", err, "sessionID", session.ID)
-				_ = p.publish(ctx, statuspkg.SessionStatusEvent{
-					SessionID: session.ID,
-					Stage:     "pipeline",
-					State:     "error",
-					Detail:    err.Error(),
-				})
-			}
 		}
 	}
 }
