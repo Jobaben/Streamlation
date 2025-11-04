@@ -22,6 +22,7 @@ type HLSConfig struct {
 	BufferSize      int
 	RetryBackoff    time.Duration
 	MaxRetryBackoff time.Duration
+	MaxSeenSegments int
 }
 
 // NewHLSStreamSource constructs a StreamSource that pulls media chunks from an HLS playlist.
@@ -43,6 +44,9 @@ func NewHLSStreamSource(cfg HLSConfig) (*HLSStreamSource, error) {
 	}
 	if cfg.MaxRetryBackoff <= 0 {
 		cfg.MaxRetryBackoff = 5 * time.Second
+	}
+	if cfg.MaxSeenSegments <= 0 {
+		cfg.MaxSeenSegments = 256
 	}
 	playlistURL, err := url.Parse(cfg.PlaylistURL)
 	if err != nil {
@@ -72,8 +76,10 @@ func (s *HLSStreamSource) Stream(ctx context.Context) (<-chan MediaChunk, <-chan
 		defer close(errs)
 
 		client := s.cfg.Client
-		seenSegments := make(map[string]struct{})
+		seenSegments := make(map[string]int64)
 		backoff := s.cfg.RetryBackoff
+		var seenCounter int64
+		maxSeen := s.cfg.MaxSeenSegments
 
 		for {
 			if ctx.Err() != nil {
@@ -104,7 +110,16 @@ func (s *HLSStreamSource) Stream(ctx context.Context) (<-chan MediaChunk, <-chan
 				if _, seen := seenSegments[seg.uri]; seen {
 					continue
 				}
-				seenSegments[seg.uri] = struct{}{}
+				seenCounter++
+				seenSegments[seg.uri] = seenCounter
+				if len(seenSegments) > maxSeen {
+					threshold := seenCounter - int64(maxSeen)
+					for uri, seq := range seenSegments {
+						if seq <= threshold {
+							delete(seenSegments, uri)
+						}
+					}
+				}
 
 				data, err := s.downloadSegment(ctx, client, seg.uri)
 				if err != nil {

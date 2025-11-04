@@ -112,3 +112,88 @@ loop:
 		t.Fatalf("metrics.ReceivedChunks = %d, want %d", metrics.ReceivedChunks, len(segments))
 	}
 }
+
+func TestHLSStreamSourcePrunesSeenSegments(t *testing.T) {
+	t.Helper()
+
+	const totalSegments = 12
+
+	segments := make([][]byte, totalSegments)
+	for i := range segments {
+		segments[i] = []byte(fmt.Sprintf("segment-%d", i))
+	}
+
+	var (
+		mu      sync.Mutex
+		emitted int
+		window  = 3
+	)
+
+	handler := http.NewServeMux()
+	handler.HandleFunc("/stream/index.m3u8", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if emitted < totalSegments {
+			emitted++
+		}
+
+		start := emitted - window
+		if start < 0 {
+			start = 0
+		}
+
+		_, _ = w.Write([]byte("#EXTM3U\n"))
+		for i := start; i < emitted; i++ {
+			_, _ = w.Write([]byte("#EXTINF:1.5,\n"))
+			_, _ = w.Write([]byte(fmt.Sprintf("seg-%d.ts\n", i)))
+		}
+	})
+
+	for i := 0; i < totalSegments; i++ {
+		idx := i
+		handler.HandleFunc(fmt.Sprintf("/stream/seg-%d.ts", i), func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write(segments[idx])
+		})
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	source, err := NewHLSStreamSource(HLSConfig{
+		PlaylistURL:     server.URL + "/stream/index.m3u8",
+		Client:          server.Client(),
+		PollInterval:    10 * time.Millisecond,
+		BufferSize:      4,
+		MaxSeenSegments: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewHLSStreamSource error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	chunks, errs := source.Stream(ctx)
+
+	received := make(map[string]struct{})
+	for len(received) < totalSegments {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context done before receiving all segments: got %d, want %d", len(received), totalSegments)
+		case err := <-errs:
+			if err != nil {
+				t.Fatalf("stream returned error: %v", err)
+			}
+		case chunk, ok := <-chunks:
+			if !ok {
+				t.Fatalf("chunks channel closed early: got %d, want %d", len(received), totalSegments)
+			}
+			key := string(chunk.Payload)
+			if _, dup := received[key]; dup {
+				t.Fatalf("duplicate segment received: %s", key)
+			}
+			received[key] = struct{}{}
+		}
+	}
+}
