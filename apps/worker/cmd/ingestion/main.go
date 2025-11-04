@@ -13,7 +13,7 @@ import (
 
 	postgres "streamlation/packages/backend/postgres"
 	queuepkg "streamlation/packages/backend/queue"
-        statuspkg "streamlation/packages/backend/status"
+	statuspkg "streamlation/packages/backend/status"
 
 	"go.uber.org/zap"
 )
@@ -64,7 +64,7 @@ func main() {
 	sessionStore := postgres.NewSessionStore(pgClient)
 	queue := queuepkg.NewRedisIngestionConsumer(redisAddr)
 	publisher := statuspkg.NewRedisStatusPublisher(redisAddr)
-        ingestor := newStreamIngestor(logger)
+	ingestor := newStreamIngestor(logger)
 
 	worker := NewIngestionWorker(queue, sessionStore, publisher, ingestor, logger, pollInterval)
 	if err := worker.Run(ctx); err != nil {
@@ -119,4 +119,3 @@ func newLogger() *zap.SugaredLogger {
 
 	return logger.Sugar()
 }
-
