@@ -4,6 +4,22 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 
 ---
 
+## Retail Release Readiness Summary
+
+The application is **not retail-ready**. Essential functionality—including the complete media translation pipeline, subtitle/audio output generation, robust persistence layers, authentication, and casting—remains incomplete. Quality gates such as integration testing, observability, compliance documentation, and installer packaging are still pending, so additional engineering phases must be completed before considering a retail launch.
+
+### Implementation Closure Plan
+
+| Workstream | Blockers | Target Deliverables | Acceptance Evidence |
+| --- | --- | --- | --- |
+| Media AI pipeline | Audio normalization, ASR/MT/TTS execution, and real output streaming are missing. | Production pipeline service with overlapping stages, FFmpeg normalization worker, Whisper ASR runner, MarianMT/Bergamot translator, Coqui/Bark TTS, subtitle assembler. | End-to-end demo translating representative streams with latency telemetry; CI integration suite passing; pipeline runbooks published. |
+| Platform resilience | Homegrown Postgres/Redis clients; no migrations or health probes. | `pgx` + migration tooling, resilient Redis client, connection pooling, structured retry/backoff policies. | Load test showing stable throughput, automated health checks in CI/CD, regression tests for failure cases. |
+| UX & casting | Dashboard lacks latency insights, casting flows, accessibility accommodations. | Next.js dashboard with translation controls, buffering indicators, Chromecast/AirPlay flows, accessibility audit fixes. | Playwright suite covering casting flows; WCAG-focused checklist complete. |
+| Security & compliance | No enforced auth, auditing, or compliance documentation. | NextAuth + Go JWT integration, RBAC, audit logging schema, compliance guide. | Pen-test checklist signed off, retention purge APIs working, `docs/compliance.md` finalized. |
+| Packaging & support | No installers, update channel, or support process. | Build scripts for macOS/Windows/Linux, model bundle distribution plan, support/rollback runbooks. | Installer smoke tests recorded, support docs stored in repo, release checklist approved. |
+
+---
+
 ## Current Repository Snapshot
 
 - **Backend API (`apps/api`)** – Exposes health, session CRUD, and WebSocket streaming endpoints. Persists sessions through a homegrown Postgres client (`packages/go/backend/postgres`) that composes SQL strings manually via a thin executor abstraction, and publishes ingestion/status events over custom RESP helpers in `packages/go/backend/queue` and `packages/go/backend/status`.
@@ -72,6 +88,20 @@ These updates are reflected in the phase adjustments below.
 - ✅ Provide REST/WebSocket APIs for session control and live status updates.
 - 🆕 Build a minimal UI for stream setup, translation language selection, and live subtitle display that surfaces retry/error telemetry.
 
+**Detailed Task Plan**
+
+| Epic | Task | Owner | Dependencies | Definition of Done |
+| --- | --- | --- | --- | --- |
+| Audio normalization | Implement FFmpeg-based normalization worker producing PCM chunks stored in Redis streams. | Media team | Finalize chunk schema in `packages/schemas`. | Worker emits normalized chunk events; integration tests (`tests/pipeline/audio_normalization_test.go`) pass. |
+| Audio normalization | Add health/metrics endpoints exposing lag and error counters. | Platform team | Normalization worker merged. | Prometheus metrics exported; alerts defined in `observability/rules.yaml`. |
+| ASR | Build Whisper runner with GPU/CPU profiles including batching controls. | Media team | Normalized audio stream available. | Runner translates sample corpora in CI; hardware tuning doc added to `docs/asr-selection.md`. |
+| Translation | Implement MarianMT/Bergamot translator service with caching and batching. | Media team | Timestamped transcripts from ASR. | Translator returns aligned segments; load test demonstrates <3 s added latency. |
+| Subtitle output | Create subtitle composer writing SRT/VTT plus WebSocket diff stream. | Media team | Translation segments ready. | Generated artifacts validated by Playwright visual snapshot; API returns downloadable files. |
+| Persistence | Swap to `pgx`, add migrations via `golang-migrate`, and enforce DAO layer. | Platform team | None | CI migration job passes; CRUD regression tests cover new DAO. |
+| Queue | Replace RESP helpers with `go-redis`, add backpressure + reconnection logic. | Platform team | None | Chaos test dropping Redis demonstrates graceful retry; metrics for queue depth emitted. |
+| Observability | Instrument OpenTelemetry tracing across API, worker, pipeline. | Platform team | Pipeline stages implemented. | Traces viewable in Jaeger; SLO dashboard screenshot stored in `docs/observability/README.md`. |
+| Frontend | Surface pipeline stage status, error toasts, retry controls. | Web team | API/worker telemetry endpoints ready. | Playwright tests (`tests/e2e/session-lifecycle.spec.ts`) green; accessibility audit passes. |
+
 **Key Workstreams**
 
 - **Stream Ingestion & Media Pipeline**
@@ -124,17 +154,20 @@ These updates are reflected in the phase adjustments below.
 - Integrate casting (Chromecast/AirPlay) and latency buffering controls on the frontend.
 - Harden authentication with OAuth providers and JWT lifecycle management.
 
-**Key Workstreams**
+**Key Workstreams & Tasks**
 
-- **AI Services Enhancements**
-  - Integrate Coqui TTS/Bark for adaptive voice cloning with fallback multi-speaker models and optional voice enrollment.
-- **Output Generation & Delivery**
-  - Produce translated audio segments accessible via REST or WebSocket push, ensuring alignment with subtitles.
-- **Frontend Experience**
-  - Overlay dubbed audio controls, integrate Video.js with HLS.js, and add casting controls leveraging Chromecast CAF receiver and AirPlay libraries.
-- **Security, Privacy & Compliance**
-  - Implement email/password and OAuth (Google, Apple, GitHub) flows via NextAuth.js backed by Go JWT APIs.
-  - Secure device tokens for casting hardware and enforce rate limiting across session APIs.
+| Epic | Focus | Tasks |
+| --- | --- | --- |
+| Dubbing | High-fidelity translated audio | 1. Implement TTS microservice orchestrating Coqui/Bark voices. 2. Build audio alignment module leveraging subtitle timestamps. 3. Expose gRPC/REST endpoints for dubbed segments with caching + retry. |
+| Casting | Device playback | 1. Deliver Chromecast CAF receiver app with OAuth-based device linking. 2. Ship AirPlay RAOP bridge with buffering controls. 3. Add frontend casting manager with device discovery and failure UX. |
+| Security | Auth hardening | 1. Wire NextAuth to Go JWT issuer with refresh/rotation. 2. Add role-based authorization checks on session APIs. 3. Instrument audit logging and admin review UI. |
+| Latency mgmt | QoS | 1. Implement adaptive buffering heuristics reading pipeline lag metrics. 2. Add operator controls for buffer targets per session. 3. Surface alerts when SLA breaches occur. |
+
+**Exit Validation**
+
+- Playwright scripted session covers dubbed playback + casting toggles.
+- Load test with three concurrent streams demonstrates <5 s end-to-end latency delta.
+- Security audit checklist closed with evidence captured in `docs/security-audit.md`.
 
 **Exit Criteria**
 
@@ -152,17 +185,18 @@ These updates are reflected in the phase adjustments below.
 
 **Key Workstreams**
 
-- **AI Services Operations**
-  - Manage model lifecycle with GPU-aware scheduling, caching, and documented hardware requirements.
-  - Expand language availability with staged rollouts and quality benchmarks.
-- **Observability & Testing Maturity**
-  - Expose advanced metrics and integrate Prometheus/Grafana dashboards; define alert thresholds for stream drops, queue backlogs, and translation latency breaches.
-  - Extend test suites with scenario tests mocking AI stages and Playwright end-to-end coverage.
-- **Security, Privacy & Compliance**
-  - Provide APIs/CLI commands to purge transcripts, audio buffers, and user sessions; document privacy controls and retention policies.
-  - Track third-party model licenses, capture acknowledgements, and complete `docs/compliance.md`.
-- **Distribution & Deployment**
-  - Package installers, publish deployment guides for offline-first distribution, and document hardware presets.
+| Theme | Deliverables | Responsible Team |
+| --- | --- | --- |
+| Model operations | GPU/CPU profile documentation, automated model download/verification scripts, staged language rollout playbooks. | AI platform |
+| Observability maturity | Production dashboards, alert runbooks, synthetic monitoring pipeline, failure scenario regression suite. | SRE |
+| Privacy & compliance | Data retention tooling, compliance checklist completion, legal review sign-off, localized privacy policy. | Security/Legal |
+| Packaging & deployment | Cross-platform installers, offline bundle packaging, release/rollback automation, support knowledge base. | Release engineering |
+
+**Exit Criteria**
+
+- Monitoring dashboards and alerting in place with runbooks for major failure modes.
+- Compliance documentation and privacy tooling reviewed with stakeholders.
+- Installation/distribution artifacts validated across target deployment environments.
 
 ## Phase 5: Scale & Enterprise Readiness (Weeks 17-20)
 
@@ -174,24 +208,17 @@ These updates are reflected in the phase adjustments below.
 
 **Key Workstreams**
 
-- **Multi-Tenant Architecture**
-  - Introduce organization-level RBAC, workspace isolation, and configurable quota management.
-- **Scalability & Resilience**
-  - Define autoscaling rules for ingestion workers, media processors, and AI services; exercise chaos testing for fault tolerance.
-- **Operational Runbooks**
-  - Produce on-call guides, incident response templates, and upgrade/rollback procedures validated through gamedays.
+| Focus Area | Planned Tasks | Success Criteria |
+| --- | --- | --- |
+| Multi-tenant architecture | 1. Partition data schemas by tenant with row-level security. 2. Build quota enforcement service. 3. Provide tenant administration UI. | Pen-test verifying isolation, automated quota tests. |
+| Scalability & resilience | 1. Define autoscaling policies for API/worker deployments. 2. Run chaos experiments covering Redis/Postgres outages. 3. Tune cold-start behavior for model loading. | Observed recovery within SLO; chaos reports archived. |
+| Operations | 1. Publish on-call runbooks and incident response templates. 2. Conduct gamedays with recorded learnings. 3. Establish release/rollback checklist with sign-offs. | Ops leadership approval; post-gameday actions closed. |
 
 **Exit Criteria**
 
 - Verified tenant isolation with load and security testing artifacts.
 - Autoscaling and chaos scenarios documented with remediation steps.
 - Operations handbook approved by SRE leadership with rollout and rollback workflows.
-
-**Exit Criteria**
-
-- Monitoring dashboards and alerting in place with runbooks for major failure modes.
-- Compliance documentation and privacy tooling reviewed with stakeholders.
-- Installation/distribution artifacts validated across target deployment environments.
 
 ## Cross-Phase Dependencies & Sequencing Considerations
 

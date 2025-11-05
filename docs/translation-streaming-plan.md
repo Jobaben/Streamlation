@@ -4,6 +4,12 @@
 
 ---
 
+## Retail Readiness Verdict
+
+Current progress does **not** meet first retail release expectations. Only ingestion scaffolding and operator monitoring are in place; the translation, normalization, subtitle/audio outputs, security controls, compliance documentation, and production-grade observability are outstanding. Retail positioning should be deferred until these foundational capabilities ship and pass end-to-end validation.
+
+---
+
 ## 1. Capture & Ingest Streams
 Identify target stream formats (HLS/DASH/RTMP, WebRTC, direct audio URLs) and design an ingestion service that can reliably pull and buffer live or on-demand streams. Include basic error handling for stream interruptions and format mismatches.
 
@@ -20,6 +26,12 @@ Identify target stream formats (HLS/DASH/RTMP, WebRTC, direct audio URLs) and de
 - ✅ File-based ingestion now streams local media via `packages/go/backend/ingestion/file.go`, allowing warm-up checks against static assets in development.
 - ⏳ DASH and WebRTC sources remain unimplemented; add-ons should extend the same interface once normalization is ready.
 
+**Next Actions**
+
+1. Define DASH/WebRTC adapter acceptance tests using canned manifests and ICE candidates.
+2. Document retry/backoff parameters in `docs/stream-ingestion.md` and socialize with SRE for tuning.
+3. Extend metrics to capture per-source buffer depth and frame drops, wiring them to Prometheus for alerting.
+
 ---
 
 ## 2. Audio Extraction & Normalization
@@ -34,6 +46,12 @@ Extract audio tracks from incoming streams, convert them to a consistent codec/s
 
 ### Progress
 - ⏳ Audio normalization is not yet implemented; the pipeline still emits stubbed stages after ingestion warm-up, so FFmpeg integration and chunk ledgers remain a priority.
+
+**Next Actions**
+
+1. Prototype FFmpeg invocation library with configurable sample rate/bit depth and write spec in `docs/audio-normalization.md`.
+2. Implement chunk ledger persisted in Postgres to track normalization offsets and retries.
+3. Introduce waveform analytics (peak/RMS) to feed into downstream VAD and clipping alerts.
 
 ---
 
@@ -51,6 +69,12 @@ Select an ASR model (e.g., Whisper, DeepSpeech, cloud APIs) and a translation mo
 ### Progress
 - ⏳ No ASR or translation services have landed; the worker continues to emit sequential stub events while the ingestion layer matures.
 
+**Next Actions**
+
+1. Finalize model selection memo covering Whisper vs. alternatives and MarianMT vs. Bergamot trade-offs.
+2. Stand up ASR microservice with gRPC streaming API and integrate with worker pipeline.
+3. Implement translation caching keyed by (source text, target language) with TTL controls.
+
 ---
 
 ## 4. Output Generation (Text & Audio)
@@ -65,6 +89,12 @@ Provide multiple output modalities: translated subtitles (SRT/VTT) and optional 
 
 ### Progress
 - ⏳ Subtitle generation and dubbed audio outputs are outstanding pending real ASR/translation data.
+
+**Next Actions**
+
+1. Define subtitle composition schema (segment, start, end, confidence) shared via `packages/schemas/subtitles.json`.
+2. Evaluate Coqui vs. Bark voices for latency, document selection, and prototype TTS worker emitting PCM segments.
+3. Build diff-stream publisher to send incremental subtitle updates over WebSocket and persist versioned SRT/VTT artifacts.
 
 ---
 
@@ -82,6 +112,12 @@ Design a delivery mechanism (web client or API) that serves the translated outpu
 - ✅ The Go API delivers session CRUD endpoints and WebSocket status streams, and the Next.js dashboard (`apps/web`) consumes those feeds for live monitoring.
 - ⏳ Real-time delivery of translated subtitles/audio awaits downstream pipeline integration.
 
+**Next Actions**
+
+1. Extend API with `/sessions/{id}/subtitles/live` WebSocket channel streaming composed segments.
+2. Build client-side buffering strategy aligning translated subtitles/audio with original playback using `MediaSource` APIs.
+3. Document sync tolerance budgets and fallback UX in `docs/delivery-sync.md`.
+
 ---
 
 ## 6. Orchestration, Scalability & Monitoring
@@ -98,6 +134,12 @@ Plan for scalable deployment, fault tolerance, logging, and observability.
 - ✅ Worker orchestration now uses a bounded goroutine pool (`apps/worker/cmd/worker`) and a separate ingestion warm-up service, improving concurrency fundamentals.
 - ⏳ Observability still relies on basic structured logs; metrics, tracing, and alerting hooks are pending.
 
+**Next Actions**
+
+1. Instrument OpenTelemetry tracing for ingestion → pipeline → delivery spans and export to collector.
+2. Define Prometheus metrics taxonomy (latency, queue depth, casting success) and implement alert thresholds.
+3. Produce deployment playbook covering Docker Compose, K8s Helm chart draft, and CI promotion gates.
+
 ---
 
 ## 7. UX & Accessibility Considerations
@@ -112,6 +154,12 @@ Ensure the interface supports language selection, stream configuration, and acce
 
 ### Progress
 - ✅ Operators can register sessions and monitor live status via the existing Next.js dashboard, though accessibility and customization work remains.
+
+**Next Actions**
+
+1. Create detailed UI specs for language selection, subtitle customization, and casting flows in `/design/ux-streamlation.fig`.
+2. Implement accessibility improvements (ARIA, keyboard support, high-contrast themes) and log results in `docs/accessibility-audit.md`.
+3. Persist user preferences via backend profiles to sync across devices.
 
 ---
 
@@ -128,6 +176,12 @@ Address user data privacy, API keys, and potential licensing requirements for st
 ### Progress
 - ⏳ Authentication and compliance documentation have not yet been implemented beyond baseline local accounts in planning documents.
 
+**Next Actions**
+
+1. Draft security architecture note covering identity providers, token storage, and device auth.
+2. Implement audit logging for stream access and translation requests, writing events to Postgres.
+3. Create compliance checklist in `docs/compliance.md` with GDPR, DMCA, and licensing considerations.
+
 ---
 
 ## 9. MVP Roadmap & Milestones
@@ -142,6 +196,12 @@ Outline phased delivery: MVP (single stream support, limited languages), beta (m
 
 ### Progress
 - ✅ Implementation and architectural plans (`docs/implementation-plan.md`, `docs/final-architectural-plan.md`) track phased delivery, but roadmap/milestone docs referenced here are still to be authored.
+
+**Next Actions**
+
+1. Author `docs/roadmap.md` summarizing MVP, beta, production milestones with target dates.
+2. Map dependencies between task-stubs, highlighting critical path items for engineering leads.
+3. Schedule stakeholder review to baselined roadmap; capture decisions in meeting notes.
 
 ---
 
