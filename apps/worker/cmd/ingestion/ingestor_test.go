@@ -8,6 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -99,6 +102,35 @@ func TestStreamIngestorIngestsRTMP(t *testing.T) {
 		Source: sessionpkg.TranslationSource{
 			Type: "rtmp",
 			URI:  fmt.Sprintf("rtmp://%s/live/stream", ln.Addr().String()),
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := ingestor.Ingest(ctx, session); err != nil {
+		t.Fatalf("Ingest returned error: %v", err)
+	}
+}
+
+func TestStreamIngestorIngestsFile(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "sample.bin")
+	if err := os.WriteFile(filePath, []byte("hello world"), 0o644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	ingestor := newStreamIngestor(newTestLogger(t))
+	ingestor.sampleWindow = 50 * time.Millisecond
+	ingestor.fileChunkSize = 4
+
+	uri := &url.URL{Scheme: "file", Path: filepath.ToSlash(filePath)}
+
+	session := sessionpkg.TranslationSession{
+		ID: "session-file",
+		Source: sessionpkg.TranslationSource{
+			Type: "file",
+			URI:  uri.String(),
 		},
 	}
 

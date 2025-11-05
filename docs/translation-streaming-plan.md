@@ -17,7 +17,8 @@ Identify target stream formats (HLS/DASH/RTMP, WebRTC, direct audio URLs) and de
 ### Progress
 - ✅ HLS and RTMP ingestion adapters live in `packages/go/backend/ingestion`, exposing a shared `StreamSource` interface with buffering, reconnect backoff, and metrics instrumentation backed by unit tests for playlist churn and RTMP framing.
 - ✅ The dedicated ingestion worker (`apps/worker/cmd/ingestion`) exercises these adapters during session warm-up to validate availability before the pipeline advances.
-- ⏳ DASH, file-based, and WebRTC sources remain unimplemented; add-ons should extend the same interface once normalization is ready.
+- ✅ File-based ingestion now streams local media via `packages/go/backend/ingestion/file.go`, allowing warm-up checks against static assets in development.
+- ⏳ DASH and WebRTC sources remain unimplemented; add-ons should extend the same interface once normalization is ready.
 
 ---
 

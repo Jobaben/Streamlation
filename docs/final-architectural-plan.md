@@ -101,7 +101,7 @@
 ---
 
 ## Implementation Progress Snapshot (Current Phase)
-- **Ingestion Adapters:** `packages/go/backend/ingestion` now houses HLS and RTMP sources with jitter buffering, reconnect logic, metrics counters, and unit coverage for playlist churn and framing edge cases.
+- **Ingestion Adapters:** `packages/go/backend/ingestion` now houses HLS, RTMP, and file-based sources with jitter buffering, reconnect logic, metrics counters, and unit coverage for playlist churn, framing edge cases, and local media replay.
 - **Worker Concurrency:** `apps/worker/cmd/worker` fans ingestion jobs across a bounded goroutine pool while `apps/worker/cmd/ingestion` performs stream warm-up using the new adapters before the pipeline stub emits stage events.
 - **Operator Surface:** The Next.js dashboard (`apps/web`) and Go API continue to provide session CRUD plus WebSocket status feeds, enabling manual verification of ingestion progress while downstream media stages remain stubbed.
 

@@ -23,7 +23,7 @@ This snapshot informs the phase updates below by grounding planned work against 
 4. **Async IO & Backpressure** – Redis interactions hand-roll RESP commands and open a brand new TCP connection for every `LPUSH`, `BRPOP`, and `PUBLISH`, preventing connection reuse or pipelining. Replace these single-flight calls with pooled clients that can multiplex requests, stream pub/sub messages, and expose buffer pressure so the API can shed load instead of blocking request handlers.
 5. **Observability & QA Depth** – Expand structured logging, metrics, and tracing across API and worker boundaries. Add golden integration tests that boot ephemeral Postgres/Redis containers, validate schema migrations, and assert end-to-end queue-to-websocket delivery to guard against protocol regressions.
 6. **Frontend Feedback Loop** – The dashboard polls REST endpoints for history and listens to WebSockets for live status, but it does not surface retry/error states. Introduce Suspense-friendly data hooks, optimistic updates for session registration, and instrumentation for websocket disconnects to close the operator loop.
-7. **Media Coverage Gaps** – The new ingestion adapters cover HLS and a simplified RTMP transport only. Expand coverage to DASH, progressive file sources, and WebRTC while layering in packet loss metrics and integration hooks for downstream normalization.
+7. **Media Coverage Gaps** – The new ingestion adapters cover HLS, RTMP, and now local file streams. Expand coverage to DASH and WebRTC while layering in packet loss metrics and integration hooks for downstream normalization.
 
 These updates are reflected in the phase adjustments below.
 
@@ -62,7 +62,7 @@ These updates are reflected in the phase adjustments below.
 >
 > **Delta vs. repo:**
 > - ✅ Covered today: Session CRUD, manual Postgres executor, handcrafted Redis queue/publish helpers, sequential pipeline stub, operator dashboard for creation + monitoring, plus production-ready HLS/RTMP ingestion adapters with worker warm-up handling.
-> - 🆕 Requires updates: Persistence hardening (`pgx` or equivalent), managed Redis client integration, pipeline parallelism/backpressure, OpenTelemetry traces/metrics, ingestion adapters for DASH/file/WebRTC, media normalization, AI runners, subtitle generation, and enhanced UI feedback states.
+> - 🆕 Requires updates: Persistence hardening (`pgx` or equivalent), managed Redis client integration, pipeline parallelism/backpressure, OpenTelemetry traces/metrics, ingestion adapters for DASH/WebRTC, media normalization, AI runners, subtitle generation, and enhanced UI feedback states.
 >
 > **Next Focus:** Harden the persistence/queue layers while expanding ingestion coverage, introducing audio normalization, ASR/translation runners, and subtitle generation so pipeline events reflect actual media progress instead of stubbed stages. Prioritize asynchronous orchestration so multiple sessions can progress concurrently without blocking the ingestion loop.
 
@@ -76,7 +76,8 @@ These updates are reflected in the phase adjustments below.
 
 - **Stream Ingestion & Media Pipeline**
   - ✅ Implement adapters for HLS and RTMP under `packages/go/backend/ingestion/`, exposing a `StreamSource` interface with jitter buffers, reconnect policies, and per-source metrics.
-  - 🆕 Add ingestion adapters for DASH, WebRTC, and static file uploads while unifying metrics into the pipeline ledger.
+  - ✅ Add ingestion adapter for static file uploads while unifying metrics into the pipeline ledger.
+  - 🆕 Add ingestion adapters for DASH and WebRTC sources, expanding shared metrics coverage across transports.
   - 🆕 Wrap FFmpeg/libav in `services/media/` to normalize audio to 16 kHz mono PCM chunks, tagging each frame with presentation timestamps and waveform statistics for downstream VAD.
   - 🆕 Introduce a `ChunkLedger` abstraction that records enqueue/dequeue offsets in Postgres so retries resume idempotently after worker restarts.
   - 🆕 Use `hibiken/asynq` (or Temporal/Argo Workflows if GPU orchestration demands) to parallelize ASR → translation tasks, persisting deterministic stage transitions in Postgres and caching transient state in Redis.
