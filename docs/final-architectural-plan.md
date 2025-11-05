@@ -4,6 +4,27 @@
 
 Streamlation is **not ready** for a first retail release. Core AI translation stages (audio normalization, ASR, MT, TTS) are still conceptual, casting remains unimplemented beyond planning, and the security/compliance posture lacks authentication, data retention, and licensing enforcement. Operational safeguards like observability, installable distributions, and documented support workflows are also pending, so the architecture should be treated as pre-production.
 
+### Architectural Closure Plan
+
+| Area | Current State | Readiness Gap | Architectural Actions |
+| --- | --- | --- | --- |
+| Media pipeline | Ingestion adapters in Go worker warm streams but emit stubbed pipeline events. | No audio normalization, ASR, MT, TTS, or mixed output graph. | Formalize stage APIs (`Normalize`, `Recognize`, `Translate`, `Synthesize`) with gRPC contracts, introduce Redis stream/topic routing, and define deterministic error handling + retries per stage. |
+| Casting & playback | UI exposes placeholder controls; no receiver services or buffering strategies. | Chromecast/AirPlay protocols, drift correction, device auth missing. | Design casting microservices with CAF receiver reference implementation, AirPlay RAOP bridge, and buffer alignment strategy tied to pipeline timestamps. |
+| Persistence & config | Postgres reached through handcrafted executor; Redis access via RESP helpers. | No connection pooling, migrations, secrets management. | Adopt `pgx` with migrations, parameterized queries, and config service; wrap Redis with managed client and centralize secrets via Vault/1Password-compatible loader. |
+| Security & compliance | Auth flows scoped to planning documents only. | No identity, RBAC, logging, or retention policies. | Specify identity provider abstraction, JWT lifecycle, auditing schema, and data retention policy with purge APIs. |
+| Observability | Structured logs only; minimal metrics. | No tracing, metrics, or alerting for pipeline/casting. | Establish OpenTelemetry spans, Prometheus metrics, Grafana dashboards, and SLO error budgets per pipeline stage. |
+| Distribution | Docker compose supports dev only. | No installers, update channels, or offline bundle packaging. | Architect build matrix for macOS/Windows/Linux, create model packaging spec, and define update manifest/rollback strategy. |
+
+Each action requires architectural artifacts (sequence diagrams, interface contracts, resource sizing) before implementation tasks begin.
+
+#### Sequenced Next Steps
+
+1. Document stage interface contracts (`docs/pipeline-interfaces.md`) and sequence diagrams for media pipeline hand-offs.
+2. Produce casting architecture RFC covering receiver topology, discovery, authentication, and latency compensation.
+3. Publish persistence/queue hardening blueprint with migration/versioning plan and secrets management proposal.
+4. Draft observability architecture showing tracing/metrics/log aggregation flows and SLO targets.
+5. Define packaging/distribution strategy including installer architecture, update manifests, and support lifecycle documentation.
+
 ## Guiding Principles
 - Deliver low-latency, high-fidelity voice translation layered onto arbitrary streaming sources while preserving the original speaker’s voice.
 - Favor components that run entirely on a local machine, minimizing external dependencies.
