@@ -1,24 +1,26 @@
 package status
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
+
+	redisclient "streamlation/packages/backend/redis"
 )
 
 type RedisStatusPublisher struct {
-	addr string
+	client *redisclient.Client
 }
 
-func NewRedisStatusPublisher(addr string) *RedisStatusPublisher {
-	return &RedisStatusPublisher{addr: addr}
+func NewRedisStatusPublisher(addr string) (*RedisStatusPublisher, error) {
+	client, err := redisclient.NewClient(addr)
+	if err != nil {
+		return nil, err
+	}
+	return &RedisStatusPublisher{client: client}, nil
 }
 
 func (p *RedisStatusPublisher) Publish(ctx context.Context, event SessionStatusEvent) error {
@@ -29,49 +31,50 @@ func (p *RedisStatusPublisher) Publish(ctx context.Context, event SessionStatusE
 	if err != nil {
 		return fmt.Errorf("marshal status event: %w", err)
 	}
-	return publishToRedis(ctx, p.addr, channelName(event.SessionID), string(payload))
+	if _, err := p.client.Do(ctx, "PUBLISH", channelName(event.SessionID), string(payload)); err != nil {
+		return fmt.Errorf("publish status event: %w", err)
+	}
+	return nil
+}
+
+func (p *RedisStatusPublisher) Close() error {
+	return p.client.Close()
 }
 
 type RedisStatusSubscriber struct {
-	addr string
+	client *redisclient.Client
 }
 
-func NewRedisStatusSubscriber(addr string) *RedisStatusSubscriber {
-	return &RedisStatusSubscriber{addr: addr}
+func NewRedisStatusSubscriber(addr string) (*RedisStatusSubscriber, error) {
+	client, err := redisclient.NewClient(addr)
+	if err != nil {
+		return nil, err
+	}
+	return &RedisStatusSubscriber{client: client}, nil
 }
 
 func (s *RedisStatusSubscriber) Subscribe(ctx context.Context, sessionID string) (StatusStream, error) {
-	d := net.Dialer{}
-	conn, err := d.DialContext(ctx, "tcp", s.addr)
+	if sessionID == "" {
+		return nil, fmt.Errorf("session id required")
+	}
+	pubsub, err := s.client.Subscribe(ctx, channelName(sessionID))
 	if err != nil {
-		return nil, fmt.Errorf("redis dial: %w", err)
+		return nil, err
 	}
 
 	stream := &redisStatusStream{
-		conn:      conn,
-		reader:    bufio.NewReader(conn),
+		pubsub:    pubsub,
+		sessionID: sessionID,
 		events:    make(chan SessionStatusEvent, 8),
 		errors:    make(chan error, 1),
-		sessionID: sessionID,
+		done:      make(chan struct{}),
 	}
-
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	} else {
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	}
-
-	command := buildRESPCommand([]string{"SUBSCRIBE", channelName(sessionID)})
-	if _, err := conn.Write(command); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("redis write subscribe: %w", err)
-	}
-
-	// Remove deadlines so we can block on reads while still honoring context cancellation via conn.Close().
-	_ = conn.SetDeadline(time.Time{})
-
-	go stream.run(ctx)
+	go stream.run()
 	return stream, nil
+}
+
+func (s *RedisStatusSubscriber) Close() error {
+	return s.client.Close()
 }
 
 type StatusStream interface {
@@ -81,12 +84,12 @@ type StatusStream interface {
 }
 
 type redisStatusStream struct {
-	conn      net.Conn
-	reader    *bufio.Reader
+	pubsub    *redisclient.PubSub
+	sessionID string
 	events    chan SessionStatusEvent
 	errors    chan error
+	done      chan struct{}
 	closeOnce sync.Once
-	sessionID string
 }
 
 func (s *redisStatusStream) Events() <-chan SessionStatusEvent {
@@ -98,59 +101,48 @@ func (s *redisStatusStream) Errors() <-chan error {
 }
 
 func (s *redisStatusStream) Close() error {
-	var err error
+	var closeErr error
 	s.closeOnce.Do(func() {
-		err = s.conn.Close()
-		close(s.events)
-		close(s.errors)
+		closeErr = s.pubsub.Close()
+		<-s.done
 	})
-	return err
+	return closeErr
 }
 
-func (s *redisStatusStream) run(ctx context.Context) {
-	defer func() { _ = s.Close() }()
+func (s *redisStatusStream) run() {
+	defer close(s.done)
+	defer close(s.events)
+	defer close(s.errors)
 
 	for {
-		if ctx.Err() != nil {
-			return
-		}
-
-		if err := s.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-			s.reportError(fmt.Errorf("redis set read deadline: %w", err))
-			return
-		}
-
-		msg, err := readPubSubMessage(s.reader)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			if ctx.Err() != nil {
+		select {
+		case msg, ok := <-s.pubsub.Messages():
+			if !ok {
 				return
 			}
-			s.reportError(err)
-			return
-		}
-
-		switch msg.kind {
-		case "subscribe", "psubscribe":
-			continue
-		case "message":
+			if msg.Kind != "message" && msg.Kind != "pmessage" {
+				continue
+			}
 			var event SessionStatusEvent
-			if err := json.Unmarshal([]byte(msg.payload), &event); err != nil {
+			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
 				s.reportError(fmt.Errorf("decode status event: %w", err))
 				continue
 			}
 			if event.SessionID == "" {
 				event.SessionID = s.sessionID
 			}
-			select {
-			case s.events <- event:
-			case <-ctx.Done():
+			s.events <- event
+		case err, ok := <-s.pubsub.Errors():
+			if !ok {
 				return
 			}
-		default:
-			continue
+			if err == nil {
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			s.reportError(err)
 		}
 	}
 }
@@ -160,169 +152,4 @@ func (s *redisStatusStream) reportError(err error) {
 	case s.errors <- err:
 	default:
 	}
-}
-
-func publishToRedis(ctx context.Context, addr, channel, payload string) error {
-	d := net.Dialer{}
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("redis dial: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
-
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	} else {
-		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	}
-
-	command := buildRESPCommand([]string{"PUBLISH", channel, payload})
-	if _, err := conn.Write(command); err != nil {
-		return fmt.Errorf("redis write: %w", err)
-	}
-
-	reader := bufio.NewReader(conn)
-	if err := readSimpleIntegerReply(reader); err != nil {
-		return err
-	}
-	return nil
-}
-
-type respValue struct {
-	kind byte
-	text string
-}
-
-type pubSubMessage struct {
-	kind    string
-	channel string
-	payload string
-}
-
-func readPubSubMessage(r *bufio.Reader) (pubSubMessage, error) {
-	values, err := readArray(r)
-	if err != nil {
-		return pubSubMessage{}, err
-	}
-	if len(values) != 3 {
-		return pubSubMessage{}, fmt.Errorf("unexpected pubsub message length: %d", len(values))
-	}
-
-	kind := values[0].text
-	channel := values[1].text
-	payload := values[2].text
-
-	return pubSubMessage{kind: kind, channel: channel, payload: payload}, nil
-}
-
-func readArray(r *bufio.Reader) ([]respValue, error) {
-	prefix, err := r.ReadByte()
-	if err != nil {
-		return nil, fmt.Errorf("redis read: %w", err)
-	}
-	if prefix != '*' {
-		return nil, fmt.Errorf("expected array prefix, got %q", prefix)
-	}
-
-	line, err := readLine(r)
-	if err != nil {
-		return nil, err
-	}
-	length, err := strconv.Atoi(line)
-	if err != nil {
-		return nil, fmt.Errorf("redis array length: %w", err)
-	}
-
-	values := make([]respValue, 0, length)
-	for i := 0; i < length; i++ {
-		b, err := r.ReadByte()
-		if err != nil {
-			return nil, fmt.Errorf("redis read: %w", err)
-		}
-		switch b {
-		case '$':
-			text, err := readBulkString(r)
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, respValue{kind: '$', text: text})
-		case ':':
-			line, err := readLine(r)
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, respValue{kind: ':', text: line})
-		case '+':
-			line, err := readLine(r)
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, respValue{kind: '+', text: line})
-		default:
-			return nil, fmt.Errorf("unexpected RESP type: %q", b)
-		}
-	}
-	return values, nil
-}
-
-func buildRESPCommand(args []string) []byte {
-	var buf strings.Builder
-	fmt.Fprintf(&buf, "*%d\r\n", len(args))
-	for _, arg := range args {
-		fmt.Fprintf(&buf, "$%d\r\n%s\r\n", len(arg), arg)
-	}
-	return []byte(buf.String())
-}
-
-func readSimpleIntegerReply(r *bufio.Reader) error {
-	prefix, err := r.ReadByte()
-	if err != nil {
-		return fmt.Errorf("redis read: %w", err)
-	}
-	switch prefix {
-	case ':':
-		if _, err := r.ReadString('\n'); err != nil {
-			return fmt.Errorf("redis read integer: %w", err)
-		}
-		return nil
-	case '-':
-		msg, err := r.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("redis error read: %w", err)
-		}
-		return fmt.Errorf("redis error: %s", strings.TrimSpace(msg))
-	default:
-		msg, err := r.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("redis unexpected reply: %w", err)
-		}
-		return fmt.Errorf("unexpected redis reply: %c%s", prefix, msg)
-	}
-}
-
-func readLine(r *bufio.Reader) (string, error) {
-	line, err := r.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("redis read line: %w", err)
-	}
-	return strings.TrimSuffix(line, "\r\n"), nil
-}
-
-func readBulkString(r *bufio.Reader) (string, error) {
-	line, err := readLine(r)
-	if err != nil {
-		return "", err
-	}
-	length, err := strconv.Atoi(line)
-	if err != nil {
-		return "", fmt.Errorf("redis bulk length: %w", err)
-	}
-	if length == -1 {
-		return "", nil
-	}
-	buf := make([]byte, length+2)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return "", fmt.Errorf("redis bulk read: %w", err)
-	}
-	return string(buf[:length]), nil
 }

@@ -62,8 +62,17 @@ func main() {
 	}
 
 	sessionStore := postgres.NewSessionStore(pgClient)
-	queue := queuepkg.NewRedisIngestionConsumer(redisAddr)
-	publisher := statuspkg.NewRedisStatusPublisher(redisAddr)
+	queue, err := queuepkg.NewRedisIngestionConsumer(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis ingestion consumer", "error", err)
+	}
+	defer func() { _ = queue.Close() }()
+
+	publisher, err := statuspkg.NewRedisStatusPublisher(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis status publisher", "error", err)
+	}
+	defer func() { _ = publisher.Close() }()
 	ingestor := newStreamIngestor(logger)
 
 	worker := NewIngestionWorker(queue, sessionStore, publisher, ingestor, logger, pollInterval)

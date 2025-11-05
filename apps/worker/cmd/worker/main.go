@@ -52,8 +52,17 @@ func main() {
 
 	store := postgres.NewSessionStore(pgClient)
 	redisAddr := getRedisAddr()
-	consumer := queuepkg.NewRedisIngestionConsumer(redisAddr)
-	statusPublisher := statuspkg.NewRedisStatusPublisher(redisAddr)
+	consumer, err := queuepkg.NewRedisIngestionConsumer(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis ingestion consumer", "error", err)
+	}
+	defer func() { _ = consumer.Close() }()
+
+	statusPublisher, err := statuspkg.NewRedisStatusPublisher(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis status publisher", "error", err)
+	}
+	defer func() { _ = statusPublisher.Close() }()
 
 	pipeline := pipelinepkg.NewSequentialStub([]pipelinepkg.Step{
 		{Stage: "ingestion", State: "buffering", Detail: "fetching stream metadata"},
