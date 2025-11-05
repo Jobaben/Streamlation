@@ -7,7 +7,8 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 ## Current Repository Snapshot
 
 - **Backend API (`apps/api`)** – Exposes health, session CRUD, and WebSocket streaming endpoints. Persists sessions through a homegrown Postgres client (`packages/go/backend/postgres`) that composes SQL strings manually via a thin executor abstraction, and publishes ingestion/status events over custom RESP helpers in `packages/go/backend/queue` and `packages/go/backend/status`.
-- **Worker (`apps/worker`)** – Consumes Redis ingestion jobs, loads session metadata, and drives a sequential pipeline stub (`packages/go/backend/pipeline`) that emits canonical stage progress for observability end to end. Ingestion is coordinated with blocking `BRPOP` calls and jobs are executed in a single goroutine.
+- **Worker (`apps/worker`)** – Consumes Redis ingestion jobs, loads session metadata, and now distributes work across a configurable goroutine pool while still delegating to the sequential pipeline stub (`packages/go/backend/pipeline`). The worker emits richer lifecycle telemetry but continues to depend on handcrafted RESP helpers for Redis connectivity.
+- **Media Ingestion (`packages/go/backend/ingestion`, `apps/worker/cmd/ingestion`)** – Provides production-ready HLS and RTMP adapters with jitter buffering, reconnection policies, and metrics counters plus an operator warm-up loop that validates stream availability before advancing the pipeline.
 - **Shared Schemas & Packages** – JSON Schema definitions live in `packages/schemas`. Backend packages define shared session models, Redis pub/sub contracts, and a stub pipeline runner to keep API/worker integration tests hermetic.
 - **Frontend (`apps/web`)** – Next.js dashboard for registering sessions, browsing persisted jobs, and monitoring live status streams. React Query caches session fetches, and server actions proxy API calls to validate backend wiring during development.
 - **Tooling & Operations** – Docker Compose orchestrates Postgres, Redis, API, worker, and web services. GitHub Actions (`.github/workflows/ci.yml`) run Go unit tests, golangci-lint, PNPM lint/test, and container builds on every change. Makefile targets wrap `docker compose`, `pnpm`, and `go test` flows for contributors.
@@ -18,10 +19,11 @@ This snapshot informs the phase updates below by grounding planned work against 
 
 1. **Storage and Data Safety** – The custom Postgres executor concatenates SQL literals and returns raw string slices. Introduce a battle-tested driver such as `jackc/pgx` (or at minimum parameterized statements) plus migration tooling to avoid injection risks, encoding bugs, and schema drift. Elevate row decoding to strongly typed structs and centralize connection pooling.
 2. **Queue & Streaming Resilience** – Redis access is implemented via handcrafted RESP writers/readers without reconnection, authentication, or backpressure controls. Wrap these helpers behind an interface backed by a resilient client (e.g., `redis/go-redis`) and layer in circuit breakers, tracing, and health probes so ingestion pressure does not stall the worker.
-3. **Pipeline Orchestration** – The worker executes the sequential stub inline, blocking ingestion while emitting events. Promote a coroutine-per-session model with cancellable contexts, stage timeouts, and an event-sourced state machine so ASR/translation stages can run in parallel once real models arrive. The current loop pops a job and fully processes it before touching the next `BRPOP`, so the worker can never overlap ingest or ASR for different sessions even though the Redis queue might be full.
+3. **Pipeline Orchestration** – The worker now distributes ingestion jobs across a goroutine pool, but each job still executes the sequential stub that serializes ingestion, ASR, and translation. Promote a cancellable, event-sourced state machine so upcoming ASR/translation stages can overlap work, stream partial results, and emit granular progress once the media stack lands.
 4. **Async IO & Backpressure** – Redis interactions hand-roll RESP commands and open a brand new TCP connection for every `LPUSH`, `BRPOP`, and `PUBLISH`, preventing connection reuse or pipelining. Replace these single-flight calls with pooled clients that can multiplex requests, stream pub/sub messages, and expose buffer pressure so the API can shed load instead of blocking request handlers.
 5. **Observability & QA Depth** – Expand structured logging, metrics, and tracing across API and worker boundaries. Add golden integration tests that boot ephemeral Postgres/Redis containers, validate schema migrations, and assert end-to-end queue-to-websocket delivery to guard against protocol regressions.
 6. **Frontend Feedback Loop** – The dashboard polls REST endpoints for history and listens to WebSockets for live status, but it does not surface retry/error states. Introduce Suspense-friendly data hooks, optimistic updates for session registration, and instrumentation for websocket disconnects to close the operator loop.
+7. **Media Coverage Gaps** – The new ingestion adapters cover HLS, RTMP, and now local file streams. Expand coverage to DASH and WebRTC while layering in packet loss metrics and integration hooks for downstream normalization.
 
 These updates are reflected in the phase adjustments below.
 
@@ -56,13 +58,13 @@ These updates are reflected in the phase adjustments below.
 
 ## Phase 2: MVP Translation Pipeline (Weeks 4-8)
 
-> **Status Update (current):** Session lifecycle APIs, Redis-backed ingestion queueing, and WebSocket status streaming are implemented. The Go API persists sessions to Postgres through manual SQL string construction, enqueues ingestion jobs, and proxies worker telemetry published through Redis. The worker consumes ingestion jobs via handcrafted RESP helpers, loads session metadata, and drives a sequential pipeline stub that emits stage events on a single goroutine. The Next.js dashboard lets operators create sessions, inspect persisted metadata, and monitor live status streams.
+> **Status Update (current):** Session lifecycle APIs, Redis-backed ingestion queueing, WebSocket status streaming, and the first media adapters are implemented. The Go API persists sessions to Postgres through manual SQL string construction, enqueues ingestion jobs, and proxies worker telemetry published through Redis. The worker consumes ingestion jobs via handcrafted RESP helpers, loads session metadata, fans work out across a goroutine pool, validates stream availability using the HLS/RTMP adapters, and then drives the sequential pipeline stub that emits stage events. The Next.js dashboard lets operators create sessions, inspect persisted metadata, and monitor live status streams.
 >
 > **Delta vs. repo:**
-> - ✅ Covered today: Session CRUD, manual Postgres executor, handcrafted Redis queue/publish helpers, sequential pipeline stub, and the operator dashboard for creation + monitoring.
-> - 🆕 Requires updates: Persistence hardening (`pgx` or equivalent), managed Redis client integration, pipeline parallelism/backpressure, OpenTelemetry traces/metrics, ingestion adapters, media normalization, AI runners, subtitle generation, and enhanced UI feedback states.
+> - ✅ Covered today: Session CRUD, manual Postgres executor, handcrafted Redis queue/publish helpers, sequential pipeline stub, operator dashboard for creation + monitoring, plus production-ready HLS/RTMP ingestion adapters with worker warm-up handling.
+> - 🆕 Requires updates: Persistence hardening (`pgx` or equivalent), managed Redis client integration, pipeline parallelism/backpressure, OpenTelemetry traces/metrics, ingestion adapters for DASH/WebRTC, media normalization, AI runners, subtitle generation, and enhanced UI feedback states.
 >
-> **Next Focus:** Harden the persistence/queue layers while implementing real ingestion adapters, audio normalization, ASR/translation runners, and subtitle generation so pipeline events reflect actual media progress instead of stubbed stages. Prioritize asynchronous orchestration so multiple sessions can progress concurrently without blocking the ingestion loop.
+> **Next Focus:** Harden the persistence/queue layers while expanding ingestion coverage, introducing audio normalization, ASR/translation runners, and subtitle generation so pipeline events reflect actual media progress instead of stubbed stages. Prioritize asynchronous orchestration so multiple sessions can progress concurrently without blocking the ingestion loop.
 
 **Objectives**
 
@@ -73,12 +75,14 @@ These updates are reflected in the phase adjustments below.
 **Key Workstreams**
 
 - **Stream Ingestion & Media Pipeline**
-  - 🆕 Implement adapters for HLS, DASH, RTMP, and static file uploads under `services/ingestion/`, exposing a `StreamSource` interface with jitter buffers, reconnect policies, and per-source metrics.
+  - ✅ Implement adapters for HLS and RTMP under `packages/go/backend/ingestion/`, exposing a `StreamSource` interface with jitter buffers, reconnect policies, and per-source metrics.
+  - ✅ Add ingestion adapter for static file uploads while unifying metrics into the pipeline ledger.
+  - 🆕 Add ingestion adapters for DASH and WebRTC sources, expanding shared metrics coverage across transports.
   - 🆕 Wrap FFmpeg/libav in `services/media/` to normalize audio to 16 kHz mono PCM chunks, tagging each frame with presentation timestamps and waveform statistics for downstream VAD.
   - 🆕 Introduce a `ChunkLedger` abstraction that records enqueue/dequeue offsets in Postgres so retries resume idempotently after worker restarts.
   - 🆕 Use `hibiken/asynq` (or Temporal/Argo Workflows if GPU orchestration demands) to parallelize ASR → translation tasks, persisting deterministic stage transitions in Postgres and caching transient state in Redis.
 - **Pipeline Orchestration & Async Coordination**
-  - 🆕 Spin up a worker pool that pulls jobs concurrently, launching a goroutine per session with bounded concurrency and context cancellation so long-running ASR does not starve new ingests.
+  - ✅ Spin up a worker pool that pulls jobs concurrently, launching a goroutine per session with bounded concurrency and context cancellation so long-running ASR does not starve new ingests (landed in `apps/worker/cmd/worker`).
   - 🆕 Decouple status publication from hot paths by buffering events onto an internal channel serviced by dedicated publishers that can batch or drop on overload.
   - 🆕 Stream Redis pub/sub events via long-lived connections managed by health-checked pools, exposing an async iterator interface for WebSocket handlers and frontend consumers.
 - **AI Services**
@@ -98,7 +102,8 @@ These updates are reflected in the phase adjustments below.
   - ✅ `GET /sessions/{id}` retrieves stored session configurations for downstream pipeline stages.
   - ✅ Persist sessions to Postgres and emit ingestion jobs so the worker can start pulling media for translation.
   - ✅ Add WebSocket session status updates surfaced from Redis-backed worker progress events.
-  - 🆕 Implement media ingestion adapters and audio normalization stubs that hand off work to the ASR stage.
+  - ✅ Implement media ingestion adapters that warm up sessions before pipeline execution (available under `apps/worker/cmd/ingestion`).
+  - 🆕 Add audio normalization stubs that hand off work to the ASR stage.
   - ✅ Provide a worker-run pipeline stub that replays canonical stage events so the frontend can exercise status streaming end to end.
 
 **Exit Criteria**
