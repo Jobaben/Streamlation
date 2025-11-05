@@ -69,17 +69,17 @@ func (c *RedisIngestionConsumer) Pop(ctx context.Context, timeout time.Duration)
 		seconds = 0
 	}
 
-	reply, err := c.client.Do(ctxWithDeadline, "BRPOP", IngestionQueueName, strconv.Itoa(seconds))
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, nil
-		}
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("dequeue ingestion: %w", err)
-	}
+       reply, err := c.client.Do(ctxWithDeadline, "BRPOP", IngestionQueueName, strconv.Itoa(seconds))
+       if err != nil {
+               if errors.Is(err, context.DeadlineExceeded) {
+                       return nil, err
+               }
+               var netErr net.Error
+               if errors.As(err, &netErr) && netErr.Timeout() {
+                       return nil, err
+               }
+               return nil, fmt.Errorf("dequeue ingestion: %w", err)
+       }
 
 	if reply.IsNil {
 		return nil, nil
