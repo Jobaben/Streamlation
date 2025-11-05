@@ -13,7 +13,6 @@ import (
 
 	postgres "streamlation/packages/backend/postgres"
 	queuepkg "streamlation/packages/backend/queue"
-	sessionpkg "streamlation/packages/backend/session"
 	statuspkg "streamlation/packages/backend/status"
 
 	"go.uber.org/zap"
@@ -65,7 +64,7 @@ func main() {
 	sessionStore := postgres.NewSessionStore(pgClient)
 	queue := queuepkg.NewRedisIngestionConsumer(redisAddr)
 	publisher := statuspkg.NewRedisStatusPublisher(redisAddr)
-	ingestor := &noopIngestor{}
+	ingestor := newStreamIngestor(logger)
 
 	worker := NewIngestionWorker(queue, sessionStore, publisher, ingestor, logger, pollInterval)
 	if err := worker.Run(ctx); err != nil {
@@ -119,17 +118,4 @@ func newLogger() *zap.SugaredLogger {
 	}
 
 	return logger.Sugar()
-}
-
-// noopIngestor is a placeholder ingestion implementation until the media pipeline lands.
-type noopIngestor struct{}
-
-func (n *noopIngestor) Ingest(ctx context.Context, session sessionpkg.TranslationSession) error {
-	_ = session
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		return nil
-	}
 }
