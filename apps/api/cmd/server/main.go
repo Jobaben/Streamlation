@@ -54,9 +54,23 @@ func main() {
 	sessionStore := postgres.NewSessionStore(pgClient)
 
 	redisAddr := getRedisAddr()
-	enqueuer := queuepkg.NewRedisIngestionEnqueuer(redisAddr)
-	statusPublisher := statuspkg.NewRedisStatusPublisher(redisAddr)
-	statusSubscriber := statuspkg.NewRedisStatusSubscriber(redisAddr)
+	enqueuer, err := queuepkg.NewRedisIngestionEnqueuer(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis ingestion enqueuer", "error", err)
+	}
+	defer func() { _ = enqueuer.Close() }()
+
+	statusPublisher, err := statuspkg.NewRedisStatusPublisher(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis status publisher", "error", err)
+	}
+	defer func() { _ = statusPublisher.Close() }()
+
+	statusSubscriber, err := statuspkg.NewRedisStatusSubscriber(redisAddr)
+	if err != nil {
+		logger.Fatalw("failed to create redis status subscriber", "error", err)
+	}
+	defer func() { _ = statusSubscriber.Close() }()
 
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", healthHandler(logger))
