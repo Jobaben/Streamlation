@@ -14,6 +14,11 @@ Identify target stream formats (HLS/DASH/RTMP, WebRTC, direct audio URLs) and de
 4. Create unit tests covering at least HLS and RTMP sample streams.
 :::
 
+### Progress
+- ✅ HLS and RTMP ingestion adapters live in `packages/go/backend/ingestion`, exposing a shared `StreamSource` interface with buffering, reconnect backoff, and metrics instrumentation backed by unit tests for playlist churn and RTMP framing.
+- ✅ The dedicated ingestion worker (`apps/worker/cmd/ingestion`) exercises these adapters during session warm-up to validate availability before the pipeline advances.
+- ⏳ DASH, file-based, and WebRTC sources remain unimplemented; add-ons should extend the same interface once normalization is ready.
+
 ---
 
 ## 2. Audio Extraction & Normalization
@@ -25,6 +30,9 @@ Extract audio tracks from incoming streams, convert them to a consistent codec/s
 3. Add telemetry around audio frame timestamps to keep translation aligned.
 4. Provide integration tests with short sample streams verifying consistent audio output.
 :::
+
+### Progress
+- ⏳ Audio normalization is not yet implemented; the pipeline still emits stubbed stages after ingestion warm-up, so FFmpeg integration and chunk ledgers remain a priority.
 
 ---
 
@@ -39,6 +47,9 @@ Select an ASR model (e.g., Whisper, DeepSpeech, cloud APIs) and a translation mo
 5. Cover service logic with unit tests using prerecorded multilingual samples.
 :::
 
+### Progress
+- ⏳ No ASR or translation services have landed; the worker continues to emit sequential stub events while the ingestion layer matures.
+
 ---
 
 ## 4. Output Generation (Text & Audio)
@@ -50,6 +61,9 @@ Provide multiple output modalities: translated subtitles (SRT/VTT) and optional 
 3. Offer APIs to fetch translated subtitles and/or TTS audio segments.
 4. Write end-to-end tests confirming subtitle timing and TTS audio length alignment.
 :::
+
+### Progress
+- ⏳ Subtitle generation and dubbed audio outputs are outstanding pending real ASR/translation data.
 
 ---
 
@@ -63,6 +77,10 @@ Design a delivery mechanism (web client or API) that serves the translated outpu
 4. Create integration tests with mocked clients verifying real-time updates.
 :::
 
+### Progress
+- ✅ The Go API delivers session CRUD endpoints and WebSocket status streams, and the Next.js dashboard (`apps/web`) consumes those feeds for live monitoring.
+- ⏳ Real-time delivery of translated subtitles/audio awaits downstream pipeline integration.
+
 ---
 
 ## 6. Orchestration, Scalability & Monitoring
@@ -74,6 +92,10 @@ Plan for scalable deployment, fault tolerance, logging, and observability.
 3. Add alerting rules for common failure modes (stream drop, ASR lag, translation errors).
 4. Document deployment workflow in `docs/deployment.md`.
 :::
+
+### Progress
+- ✅ Worker orchestration now uses a bounded goroutine pool (`apps/worker/cmd/worker`) and a separate ingestion warm-up service, improving concurrency fundamentals.
+- ⏳ Observability still relies on basic structured logs; metrics, tracing, and alerting hooks are pending.
 
 ---
 
@@ -87,6 +109,9 @@ Ensure the interface supports language selection, stream configuration, and acce
 4. Conduct usability testing sessions and summarize findings.
 :::
 
+### Progress
+- ✅ Operators can register sessions and monitor live status via the existing Next.js dashboard, though accessibility and customization work remains.
+
 ---
 
 ## 8. Security & Compliance
@@ -99,6 +124,9 @@ Address user data privacy, API keys, and potential licensing requirements for st
 4. Implement logging/auditing around stream access and translation requests.
 :::
 
+### Progress
+- ⏳ Authentication and compliance documentation have not yet been implemented beyond baseline local accounts in planning documents.
+
 ---
 
 ## 9. MVP Roadmap & Milestones
@@ -110,6 +138,9 @@ Outline phased delivery: MVP (single stream support, limited languages), beta (m
 3. Highlight research spikes (e.g., ASR evaluation) vs. engineering tasks.
 4. Review roadmap with stakeholders and iterate.
 :::
+
+### Progress
+- ✅ Implementation and architectural plans (`docs/implementation-plan.md`, `docs/final-architectural-plan.md`) track phased delivery, but roadmap/milestone docs referenced here are still to be authored.
 
 ---
 
