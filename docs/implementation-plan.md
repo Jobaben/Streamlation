@@ -4,6 +4,12 @@ This plan synthesizes the architectural vision from `final-architectural-plan.md
 
 ---
 
+## Retail Release Readiness Summary
+
+The application is **not retail-ready**. Essential functionality—including the complete media translation pipeline, subtitle/audio output generation, robust persistence layers, authentication, and casting—remains incomplete. Quality gates such as integration testing, observability, compliance documentation, and installer packaging are still pending, so additional engineering phases must be completed before considering a retail launch.
+
+---
+
 ## Current Repository Snapshot
 
 - **Backend API (`apps/api`)** – Exposes health, session CRUD, and WebSocket streaming endpoints. Persists sessions through a homegrown Postgres client (`packages/go/backend/postgres`) that composes SQL strings manually via a thin executor abstraction, and publishes ingestion/status events over custom RESP helpers in `packages/go/backend/queue` and `packages/go/backend/status`.

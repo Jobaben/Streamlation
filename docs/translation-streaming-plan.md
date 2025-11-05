@@ -4,6 +4,12 @@
 
 ---
 
+## Retail Readiness Verdict
+
+Current progress does **not** meet first retail release expectations. Only ingestion scaffolding and operator monitoring are in place; the translation, normalization, subtitle/audio outputs, security controls, compliance documentation, and production-grade observability are outstanding. Retail positioning should be deferred until these foundational capabilities ship and pass end-to-end validation.
+
+---
+
 ## 1. Capture & Ingest Streams
 Identify target stream formats (HLS/DASH/RTMP, WebRTC, direct audio URLs) and design an ingestion service that can reliably pull and buffer live or on-demand streams. Include basic error handling for stream interruptions and format mismatches.
 

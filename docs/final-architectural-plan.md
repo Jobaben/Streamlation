@@ -1,5 +1,9 @@
 # Final Architectural Plan for Streamlation
 
+## Retail Readiness Assessment
+
+Streamlation is **not ready** for a first retail release. Core AI translation stages (audio normalization, ASR, MT, TTS) are still conceptual, casting remains unimplemented beyond planning, and the security/compliance posture lacks authentication, data retention, and licensing enforcement. Operational safeguards like observability, installable distributions, and documented support workflows are also pending, so the architecture should be treated as pre-production.
+
 ## Guiding Principles
 - Deliver low-latency, high-fidelity voice translation layered onto arbitrary streaming sources while preserving the original speaker’s voice.
 - Favor components that run entirely on a local machine, minimizing external dependencies.
