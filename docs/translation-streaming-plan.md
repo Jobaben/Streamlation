@@ -4,6 +4,24 @@
 
 ---
 
+## Overall Progress Summary
+
+| Phase | Component | Status | Completion |
+|-------|-----------|--------|------------|
+| 1 | Foundation Infrastructure | Done | 100% |
+| 2 | Stream Ingestion | Partial | 75% (HLS/RTMP/File done, DASH/WebRTC missing) |
+| 2 | Audio Normalization | Not started | 0% |
+| 2 | ASR Service | Stubbed | 5% |
+| 2 | Translation Service | Stubbed | 5% |
+| 2 | Output Generation | Not started | 0% |
+| 3 | TTS Dubbing | Not started | 0% |
+| 3 | Casting | Not started | 0% |
+| 3 | Authentication | Not started | 0% |
+| 4 | Observability | Basic | 10% |
+| 4 | Compliance | Not started | 0% |
+
+---
+
 ## Retail Readiness Verdict
 
 Current progress does **not** meet first retail release expectations. Only ingestion scaffolding and operator monitoring are in place; the translation, normalization, subtitle/audio outputs, security controls, compliance documentation, and production-grade observability are outstanding. Retail positioning should be deferred until these foundational capabilities ship and pass end-to-end validation.
@@ -21,16 +39,28 @@ Identify target stream formats (HLS/DASH/RTMP, WebRTC, direct audio URLs) and de
 :::
 
 ### Progress
-- ✅ HLS and RTMP ingestion adapters live in `packages/go/backend/ingestion`, exposing a shared `StreamSource` interface with buffering, reconnect backoff, and metrics instrumentation backed by unit tests for playlist churn and RTMP framing.
-- ✅ The dedicated ingestion worker (`apps/worker/cmd/ingestion`) exercises these adapters during session warm-up to validate availability before the pipeline advances.
-- ✅ File-based ingestion now streams local media via `packages/go/backend/ingestion/file.go`, allowing warm-up checks against static assets in development.
-- ⏳ DASH and WebRTC sources remain unimplemented; add-ons should extend the same interface once normalization is ready.
+
+| Item | Status | Location |
+|------|--------|----------|
+| HLS adapter | Done | `packages/go/backend/ingestion/hls.go` |
+| RTMP adapter | Done | `packages/go/backend/ingestion/rtmp.go` |
+| File adapter | Done | `packages/go/backend/ingestion/file.go` |
+| Stream source interface | Done | `packages/go/backend/ingestion/source.go` |
+| Ingestion worker | Done | `apps/worker/cmd/ingestion/` |
+| DASH adapter | Not started | `packages/go/backend/ingestion/dash.go` (to create) |
+| WebRTC adapter | Not started | `packages/go/backend/ingestion/webrtc.go` (to create) |
+
+**Completion: 75%**
 
 **Next Actions**
 
-1. Define DASH/WebRTC adapter acceptance tests using canned manifests and ICE candidates.
-2. Document retry/backoff parameters in `docs/stream-ingestion.md` and socialize with SRE for tuning.
-3. Extend metrics to capture per-source buffer depth and frame drops, wiring them to Prometheus for alerting.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Define DASH adapter | `packages/go/backend/ingestion/dash.go` | Medium |
+| Define WebRTC adapter | `packages/go/backend/ingestion/webrtc.go` | Medium |
+| DASH/WebRTC acceptance tests | `packages/go/backend/ingestion/dash_test.go`, `webrtc_test.go` | Medium |
+| Document retry/backoff parameters | `docs/stream-ingestion.md` | Low |
+| Prometheus metrics for buffer depth | `packages/go/backend/ingestion/metrics.go` | Medium |
 
 ---
 
@@ -45,13 +75,30 @@ Extract audio tracks from incoming streams, convert them to a consistent codec/s
 :::
 
 ### Progress
-- ⏳ Audio normalization is not yet implemented; the pipeline still emits stubbed stages after ingestion warm-up, so FFmpeg integration and chunk ledgers remain a priority.
+
+| Item | Status | Location |
+|------|--------|----------|
+| FFmpeg wrapper | Not started | `packages/go/backend/media/ffmpeg.go` (to create) |
+| Normalizer interface | Not started | `packages/go/backend/media/normalizer.go` (to create) |
+| FFmpeg normalizer | Not started | `packages/go/backend/media/ffmpeg_normalizer.go` (to create) |
+| Stub normalizer | Not started | `packages/go/backend/media/stub_normalizer.go` (to create) |
+| Chunk ledger | Not started | `packages/go/backend/media/ledger.go` (to create) |
+| Audio chunk schema | Not started | `packages/schemas/audio-chunk.schema.json` (to create) |
+
+**Completion: 0%**
 
 **Next Actions**
 
-1. Prototype FFmpeg invocation library with configurable sample rate/bit depth and write spec in `docs/audio-normalization.md`.
-2. Implement chunk ledger persisted in Postgres to track normalization offsets and retries.
-3. Introduce waveform analytics (peak/RMS) to feed into downstream VAD and clipping alerts.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Define Normalizer interface | `packages/go/backend/media/normalizer.go` | Critical |
+| Implement FFmpeg wrapper | `packages/go/backend/media/ffmpeg.go` | Critical |
+| Create FFmpeg normalizer | `packages/go/backend/media/ffmpeg_normalizer.go` | Critical |
+| Create stub normalizer for testing | `packages/go/backend/media/stub_normalizer.go` | High |
+| Implement chunk ledger in Postgres | `packages/go/backend/media/ledger.go`, migration in `packages/go/backend/postgres/migrations/` | High |
+| Add test data for normalization | `packages/go/backend/media/testdata/` | Medium |
+| Document audio normalization spec | `docs/audio-normalization.md` | Low |
+| Add waveform analytics (RMS/peak) | `packages/go/backend/media/analytics.go` | Medium |
 
 ---
 
@@ -67,13 +114,35 @@ Select an ASR model (e.g., Whisper, DeepSpeech, cloud APIs) and a translation mo
 :::
 
 ### Progress
-- ⏳ No ASR or translation services have landed; the worker continues to emit sequential stub events while the ingestion layer matures.
+
+| Item | Status | Location |
+|------|--------|----------|
+| Recognizer interface | Not started | `packages/go/backend/asr/recognizer.go` (to create) |
+| Whisper recognizer | Not started | `packages/go/backend/asr/whisper_recognizer.go` (to create) |
+| Stub recognizer | Not started | `packages/go/backend/asr/stub_recognizer.go` (to create) |
+| Translator interface | Not started | `packages/go/backend/translation/translator.go` (to create) |
+| MarianMT translator | Not started | `packages/go/backend/translation/marian_translator.go` (to create) |
+| Stub translator | Not started | `packages/go/backend/translation/stub_translator.go` (to create) |
+| Translation cache | Not started | `packages/go/backend/translation/cache.go` (to create) |
+| Pipeline stub | Exists (fake events) | `packages/go/backend/pipeline/pipeline.go:17-73` |
+
+**Completion: 5%** (only stub pipeline emitting fake events)
 
 **Next Actions**
 
-1. Finalize model selection memo covering Whisper vs. alternatives and MarianMT vs. Bergamot trade-offs.
-2. Stand up ASR microservice with gRPC streaming API and integrate with worker pipeline.
-3. Implement translation caching keyed by (source text, target language) with TTL controls.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Define Recognizer interface | `packages/go/backend/asr/recognizer.go` | Critical |
+| Implement Whisper wrapper | `packages/go/backend/asr/whisper_recognizer.go` | Critical |
+| Create stub recognizer for testing | `packages/go/backend/asr/stub_recognizer.go` | High |
+| Add ASR test data | `packages/go/backend/asr/testdata/transcripts/` | High |
+| Define Translator interface | `packages/go/backend/translation/translator.go` | Critical |
+| Implement MarianMT wrapper | `packages/go/backend/translation/marian_translator.go` | Critical |
+| Create stub translator for testing | `packages/go/backend/translation/stub_translator.go` | High |
+| Add translation dictionaries | `packages/go/backend/translation/testdata/dictionaries/` | High |
+| Implement translation cache | `packages/go/backend/translation/cache.go` | Medium |
+| Finalize model selection memo | `docs/asr-selection.md` | Medium |
+| Wire ASR to pipeline | Update `packages/go/backend/pipeline/pipeline.go` | Critical |
 
 ---
 
@@ -88,13 +157,37 @@ Provide multiple output modalities: translated subtitles (SRT/VTT) and optional 
 :::
 
 ### Progress
-- ⏳ Subtitle generation and dubbed audio outputs are outstanding pending real ASR/translation data.
+
+| Item | Status | Location |
+|------|--------|----------|
+| SubtitleGenerator interface | Not started | `packages/go/backend/output/generator.go` (to create) |
+| SRT generator | Not started | `packages/go/backend/output/srt.go` (to create) |
+| VTT generator | Not started | `packages/go/backend/output/vtt.go` (to create) |
+| Stub generator | Not started | `packages/go/backend/output/stub_generator.go` (to create) |
+| Synthesizer interface | Not started | `packages/go/backend/tts/synthesizer.go` (to create) |
+| Coqui TTS | Not started | `packages/go/backend/tts/coqui.go` (to create) |
+| Bark TTS | Not started | `packages/go/backend/tts/bark.go` (to create) |
+| Stub synthesizer | Not started | `packages/go/backend/tts/stub_synthesizer.go` (to create) |
+| Subtitle schema | Not started | `packages/schemas/subtitle.schema.json` (to create) |
+
+**Completion: 0%**
 
 **Next Actions**
 
-1. Define subtitle composition schema (segment, start, end, confidence) shared via `packages/schemas/subtitles.json`.
-2. Evaluate Coqui vs. Bark voices for latency, document selection, and prototype TTS worker emitting PCM segments.
-3. Build diff-stream publisher to send incremental subtitle updates over WebSocket and persist versioned SRT/VTT artifacts.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Define SubtitleGenerator interface | `packages/go/backend/output/generator.go` | Critical |
+| Implement SRT generator | `packages/go/backend/output/srt.go` | Critical |
+| Implement VTT generator | `packages/go/backend/output/vtt.go` | Critical |
+| Create stub generator for testing | `packages/go/backend/output/stub_generator.go` | High |
+| Define subtitle schema | `packages/schemas/subtitle.schema.json` | High |
+| Add subtitle API endpoint | `apps/api/cmd/server/subtitles.go` | High |
+| Define Synthesizer interface | `packages/go/backend/tts/synthesizer.go` | Medium |
+| Evaluate Coqui vs. Bark | `docs/tts-selection.md` | Medium |
+| Implement Coqui TTS wrapper | `packages/go/backend/tts/coqui.go` | Medium |
+| Create stub synthesizer | `packages/go/backend/tts/stub_synthesizer.go` | Medium |
+| Add TTS test audio | `packages/go/backend/tts/testdata/voices/` | Medium |
+| Build diff-stream publisher | `packages/go/backend/output/stream.go` | High |
 
 ---
 
@@ -109,14 +202,28 @@ Design a delivery mechanism (web client or API) that serves the translated outpu
 :::
 
 ### Progress
-- ✅ The Go API delivers session CRUD endpoints and WebSocket status streams, and the Next.js dashboard (`apps/web`) consumes those feeds for live monitoring.
-- ⏳ Real-time delivery of translated subtitles/audio awaits downstream pipeline integration.
+
+| Item | Status | Location |
+|------|--------|----------|
+| Session CRUD API | Done | `apps/api/cmd/server/session.go` |
+| WebSocket status streaming | Done | `apps/api/cmd/server/status.go` |
+| Next.js dashboard | Done | `apps/web/app/page.tsx` |
+| Subtitle live stream endpoint | Not started | `apps/api/cmd/server/subtitles.go` (to create) |
+| Client-side buffering | Not started | `apps/web/app/hooks/useSubtitleSync.ts` (to create) |
+| MediaSource integration | Not started | `apps/web/app/components/VideoPlayer.tsx` (to create) |
+
+**Completion: 40%** (basic status streaming works, subtitle delivery pending)
 
 **Next Actions**
 
-1. Extend API with `/sessions/{id}/subtitles/live` WebSocket channel streaming composed segments.
-2. Build client-side buffering strategy aligning translated subtitles/audio with original playback using `MediaSource` APIs.
-3. Document sync tolerance budgets and fallback UX in `docs/delivery-sync.md`.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Add subtitle WebSocket endpoint | `apps/api/cmd/server/subtitles.go` | Critical |
+| Build useSubtitleSync hook | `apps/web/app/hooks/useSubtitleSync.ts` | High |
+| Implement VideoPlayer component | `apps/web/app/components/VideoPlayer.tsx` | High |
+| Add MediaSource integration | `apps/web/app/lib/mediaSource.ts` | High |
+| Document sync tolerance budgets | `docs/delivery-sync.md` | Medium |
+| Add dubbed audio streaming | `apps/api/cmd/server/audio.go` | Medium |
 
 ---
 
@@ -131,14 +238,34 @@ Plan for scalable deployment, fault tolerance, logging, and observability.
 :::
 
 ### Progress
-- ✅ Worker orchestration now uses a bounded goroutine pool (`apps/worker/cmd/worker`) and a separate ingestion warm-up service, improving concurrency fundamentals.
-- ⏳ Observability still relies on basic structured logs; metrics, tracing, and alerting hooks are pending.
+
+| Item | Status | Location |
+|------|--------|----------|
+| Worker goroutine pool | Done | `apps/worker/cmd/worker/main.go` |
+| Ingestion warm-up service | Done | `apps/worker/cmd/ingestion/` |
+| Structured logging (zap) | Done | `third_party/go.uber.org/zap/` |
+| Docker Compose stack | Done | `docker-compose.yml` |
+| CI pipeline | Done | `.github/workflows/ci.yml` |
+| OpenTelemetry tracing | Not started | `packages/go/backend/telemetry/tracer.go` (to create) |
+| Prometheus metrics | Not started | `packages/go/backend/telemetry/metrics.go` (to create) |
+| Alerting rules | Not started | `observability/alerts/` (to create) |
+| Grafana dashboards | Not started | `observability/dashboards/` (to create) |
+
+**Completion: 30%** (basic orchestration done, observability pending)
 
 **Next Actions**
 
-1. Instrument OpenTelemetry tracing for ingestion → pipeline → delivery spans and export to collector.
-2. Define Prometheus metrics taxonomy (latency, queue depth, casting success) and implement alert thresholds.
-3. Produce deployment playbook covering Docker Compose, K8s Helm chart draft, and CI promotion gates.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Create telemetry package | `packages/go/backend/telemetry/` | High |
+| Add OpenTelemetry tracing | `packages/go/backend/telemetry/tracer.go` | High |
+| Define Prometheus metrics | `packages/go/backend/telemetry/metrics.go` | High |
+| Instrument API handlers | `apps/api/cmd/server/*.go` | High |
+| Instrument worker stages | `apps/worker/cmd/worker/main.go` | High |
+| Create Grafana dashboards | `observability/dashboards/*.json` | Medium |
+| Define alerting rules | `observability/alerts/*.yaml` | Medium |
+| Create deployment playbook | `docs/deployment.md` | Medium |
+| Draft K8s Helm chart | `deploy/k8s/helm/` | Low |
 
 ---
 
@@ -153,13 +280,34 @@ Ensure the interface supports language selection, stream configuration, and acce
 :::
 
 ### Progress
-- ✅ Operators can register sessions and monitor live status via the existing Next.js dashboard, though accessibility and customization work remains.
+
+| Item | Status | Location |
+|------|--------|----------|
+| Session registration form | Done | `apps/web/app/page.tsx` |
+| Live status monitoring | Done | `apps/web/app/page.tsx` |
+| Session list display | Done | `apps/web/app/page.tsx` |
+| Language selection UI | Basic | `apps/web/app/page.tsx` |
+| Subtitle customization | Not started | `apps/web/app/components/SubtitleSettings.tsx` (to create) |
+| Casting controls | Not started | `apps/web/app/components/CastingControls.tsx` (to create) |
+| Accessibility (ARIA) | Partial | Needs audit |
+| Keyboard navigation | Partial | Needs audit |
+| High-contrast themes | Not started | `apps/web/app/globals.css` |
+| User preferences API | Not started | `apps/api/cmd/server/preferences.go` (to create) |
+
+**Completion: 40%** (basic UI done, polish and accessibility pending)
 
 **Next Actions**
 
-1. Create detailed UI specs for language selection, subtitle customization, and casting flows in `/design/ux-streamlation.fig`.
-2. Implement accessibility improvements (ARIA, keyboard support, high-contrast themes) and log results in `docs/accessibility-audit.md`.
-3. Persist user preferences via backend profiles to sync across devices.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Create SubtitleSettings component | `apps/web/app/components/SubtitleSettings.tsx` | Medium |
+| Create CastingControls component | `apps/web/app/components/CastingControls.tsx` | Medium |
+| Add high-contrast theme | `apps/web/app/globals.css`, `apps/web/tailwind.config.ts` | Medium |
+| Implement keyboard navigation | `apps/web/app/components/*.tsx` | Medium |
+| Add ARIA labels | `apps/web/app/components/*.tsx` | Medium |
+| Create user preferences API | `apps/api/cmd/server/preferences.go` | Low |
+| Document accessibility audit | `docs/accessibility-audit.md` | Low |
+| Create UI spec document | `design/ux-streamlation.fig` or `docs/ui-spec.md` | Low |
 
 ---
 
@@ -174,13 +322,34 @@ Address user data privacy, API keys, and potential licensing requirements for st
 :::
 
 ### Progress
-- ⏳ Authentication and compliance documentation have not yet been implemented beyond baseline local accounts in planning documents.
+
+| Item | Status | Location |
+|------|--------|----------|
+| Authentication strategy | Planning only | See `docs/final-architectural-plan.md` |
+| Go JWT issuer | Not started | `apps/api/cmd/server/auth.go` (to create) |
+| Auth middleware | Not started | `apps/api/cmd/server/middleware/auth.go` (to create) |
+| NextAuth integration | Not started | `apps/web/app/api/auth/[...nextauth]/route.ts` (to create) |
+| Audit logging | Not started | `packages/go/backend/audit/logger.go` (to create) |
+| Secrets management | Not started | Vault/1Password integration |
+| Compliance documentation | Not started | `docs/compliance.md` (to create) |
+| Data retention API | Not started | `packages/go/backend/retention/purge.go` (to create) |
+
+**Completion: 0%**
 
 **Next Actions**
 
-1. Draft security architecture note covering identity providers, token storage, and device auth.
-2. Implement audit logging for stream access and translation requests, writing events to Postgres.
-3. Create compliance checklist in `docs/compliance.md` with GDPR, DMCA, and licensing considerations.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Draft security architecture | `docs/security-architecture.md` | High |
+| Implement Go JWT issuer | `apps/api/cmd/server/auth.go` | High |
+| Create auth middleware | `apps/api/cmd/server/middleware/auth.go` | High |
+| Set up NextAuth | `apps/web/app/api/auth/[...nextauth]/route.ts` | High |
+| Implement audit logging | `packages/go/backend/audit/logger.go` | Medium |
+| Add audit events table | `packages/go/backend/postgres/migrations/audit.sql` | Medium |
+| Create compliance checklist | `docs/compliance.md` | Medium |
+| Implement data retention purge | `packages/go/backend/retention/purge.go` | Medium |
+| Document GDPR considerations | `docs/compliance.md` | Medium |
+| Track third-party licenses | `docs/licenses/` | Low |
 
 ---
 
@@ -195,13 +364,49 @@ Outline phased delivery: MVP (single stream support, limited languages), beta (m
 :::
 
 ### Progress
-- ✅ Implementation and architectural plans (`docs/implementation-plan.md`, `docs/final-architectural-plan.md`) track phased delivery, but roadmap/milestone docs referenced here are still to be authored.
+
+| Item | Status | Location |
+|------|--------|----------|
+| Implementation plan | Done | `docs/implementation-plan.md` |
+| Architectural plan | Done | `docs/final-architectural-plan.md` |
+| Baseline plan (this doc) | Done | `docs/translation-streaming-plan.md` |
+| Formal roadmap doc | Not started | `docs/roadmap.md` (to create) |
+| Dependency mapping | Partial | See `docs/implementation-plan.md` |
+
+**Completion: 60%** (planning docs exist but formal roadmap pending)
 
 **Next Actions**
 
-1. Author `docs/roadmap.md` summarizing MVP, beta, production milestones with target dates.
-2. Map dependencies between task-stubs, highlighting critical path items for engineering leads.
-3. Schedule stakeholder review to baselined roadmap; capture decisions in meeting notes.
+| Action | Implementation Location | Priority |
+|--------|------------------------|----------|
+| Author formal roadmap | `docs/roadmap.md` | Low |
+| Map critical path dependencies | `docs/implementation-plan.md` (update) | Low |
+| Create milestone tracking | GitHub Projects or `docs/milestones.md` | Low |
+
+---
+
+## Summary: Critical Path to MVP
+
+The following items must be completed in order to deliver a functioning MVP:
+
+| # | Component | Implementation Location | Blocked By |
+|---|-----------|------------------------|------------|
+| 1 | Audio Normalizer | `packages/go/backend/media/normalize.go` | None |
+| 2 | ASR Service | `packages/go/backend/asr/whisper_recognizer.go` | #1 |
+| 3 | Translation Service | `packages/go/backend/translation/marian_translator.go` | #2 |
+| 4 | Subtitle Generator | `packages/go/backend/output/subtitle.go` | #3 |
+| 5 | Wire Pipeline | `packages/go/backend/pipeline/production_runner.go` | #1, #2, #3, #4 |
+| 6 | Subtitle API | `apps/api/cmd/server/subtitles.go` | #4 |
+| 7 | Frontend Player | `apps/web/app/components/VideoPlayer.tsx` | #6 |
+
+For testability without real AI models, implement stub versions first:
+- `packages/go/backend/media/stub_normalizer.go`
+- `packages/go/backend/asr/stub_recognizer.go`
+- `packages/go/backend/translation/stub_translator.go`
+- `packages/go/backend/output/stub_generator.go`
+- `packages/go/backend/pipeline/testable_runner.go`
+
+See `docs/implementation-plan.md` → "Scaffold Implementation for Testability" for detailed instructions.
 
 ---
 

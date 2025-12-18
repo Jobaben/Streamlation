@@ -2,10 +2,53 @@
 
 Watch and listen in your language.
 
-Phase one establishes the foundational infrastructure for a local-first streaming
-translation platform. The repository now contains a Turborepo workspace with Go
-services, a Next.js frontend, shared JSON schemas, Docker orchestration, and CI
-pipelines ready for subsequent feature phases.
+A local-first streaming translation platform that ingests video/audio streams,
+transcribes and translates spoken content using AI, and serves translated output
+(subtitles and dubbed audio) in near real-time.
+
+---
+
+## Current Status
+
+**Retail Readiness: NOT READY**
+
+The orchestration foundation (Phase 1) is complete. The core AI translation
+pipeline remains stubbed—no actual translation occurs yet.
+
+| Phase | Description | Progress |
+|-------|-------------|----------|
+| Phase 1 | Foundation Infrastructure | 100% |
+| Phase 2 | MVP Translation Pipeline | ~10% |
+| Phase 3 | Enhanced Media Experience | 0% |
+| Phase 4 | Production Hardening | 0% |
+| Phase 5 | Enterprise Scale | 0% |
+
+### What Works Today
+
+- Session registration, persistence, and retrieval via REST API
+- Real-time status streaming via WebSocket
+- HLS, RTMP, and file-based stream ingestion with warm-up validation
+- Worker job queue with bounded concurrency
+- Next.js dashboard for session management and live monitoring
+- Docker Compose stack for local development
+- CI/CD pipeline with tests, linting, and container builds
+
+### What's Missing (Critical Path)
+
+| Component | Status | Implementation Location |
+|-----------|--------|------------------------|
+| Audio Normalization | Not implemented | `packages/go/backend/media/` (to create) |
+| ASR Service (Whisper) | Stubbed | `packages/go/backend/asr/` (to create) |
+| Translation Service | Stubbed | `packages/go/backend/translation/` (to create) |
+| Subtitle Generation | Not implemented | `packages/go/backend/output/` (to create) |
+| TTS Dubbing | Not implemented | `packages/go/backend/tts/` (to create) |
+| DASH Adapter | Not implemented | `packages/go/backend/ingestion/dash.go` |
+| WebRTC Adapter | Not implemented | `packages/go/backend/ingestion/webrtc.go` |
+| Authentication | Not implemented | `apps/api/cmd/server/auth.go` (to create) |
+| Production DB Client | Technical debt | Replace `packages/go/backend/postgres/` with `pgx` |
+| Production Redis Client | Technical debt | Replace `packages/go/backend/redis/` with `go-redis` |
+
+---
 
 ## Repository Structure
 
@@ -94,8 +137,38 @@ The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pushes and pull
 requests, executing Go tests, golangci-lint, PNPM lint/test tasks, and Docker image
 builds for all services.
 
+## Test Coverage
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Go Backend | 62% file coverage | All tests pass |
+| Frontend | 0% | No tests implemented |
+| Integration | Limited | Protocol-level mocks only |
+
+**Tested Components:**
+- `packages/go/backend/ingestion/` - HLS, RTMP, file adapters
+- `packages/go/backend/pipeline/` - Pipeline execution
+- `packages/go/backend/postgres/` - Database operations
+- `packages/go/backend/queue/` - Redis queue operations
+- `packages/go/backend/status/` - Status pub/sub
+- `apps/api/cmd/server/` - API handlers
+- `apps/worker/cmd/` - Worker and ingestion
+
+**Untested Components:**
+- `packages/go/backend/redis/client.go` - Redis client (186 lines)
+- `apps/web/` - Entire frontend
+
 ## Documentation
 
-- [Final Architectural Plan](docs/final-architectural-plan.md)
-- [Baseline Plan](docs/translation-streaming-plan.md)
-- [Implementation Plan](docs/implementation-plan.md)
+- [Final Architectural Plan](docs/final-architectural-plan.md) - Architecture vision and design decisions
+- [Baseline Plan](docs/translation-streaming-plan.md) - Task stubs and progress tracking
+- [Implementation Plan](docs/implementation-plan.md) - Phased roadmap with detailed tasks
+
+### Documentation Gaps
+
+The following documentation is referenced but not yet created:
+- `docs/pipeline-interfaces.md` - Stage interface contracts
+- `docs/asr-selection.md` - ASR model evaluation
+- `docs/compliance.md` - GDPR/DMCA compliance checklist
+- `docs/deployment.md` - Production deployment guide
+- `docs/API.md` - OpenAPI specification
