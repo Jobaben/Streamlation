@@ -10,36 +10,75 @@ The application is **not retail-ready**. Essential functionality—including the
 
 ### Implementation Closure Plan
 
-| Workstream | Blockers | Target Deliverables | Acceptance Evidence |
-| --- | --- | --- | --- |
-| Media AI pipeline | Audio normalization, ASR/MT/TTS execution, and real output streaming are missing. | Production pipeline service with overlapping stages, FFmpeg normalization worker, Whisper ASR runner, MarianMT/Bergamot translator, Coqui/Bark TTS, subtitle assembler. | End-to-end demo translating representative streams with latency telemetry; CI integration suite passing; pipeline runbooks published. |
-| Platform resilience | Homegrown Postgres/Redis clients; no migrations or health probes. | `pgx` + migration tooling, resilient Redis client, connection pooling, structured retry/backoff policies. | Load test showing stable throughput, automated health checks in CI/CD, regression tests for failure cases. |
-| UX & casting | Dashboard lacks latency insights, casting flows, accessibility accommodations. | Next.js dashboard with translation controls, buffering indicators, Chromecast/AirPlay flows, accessibility audit fixes. | Playwright suite covering casting flows; WCAG-focused checklist complete. |
-| Security & compliance | No enforced auth, auditing, or compliance documentation. | NextAuth + Go JWT integration, RBAC, audit logging schema, compliance guide. | Pen-test checklist signed off, retention purge APIs working, `docs/compliance.md` finalized. |
-| Packaging & support | No installers, update channel, or support process. | Build scripts for macOS/Windows/Linux, model bundle distribution plan, support/rollback runbooks. | Installer smoke tests recorded, support docs stored in repo, release checklist approved. |
+| Workstream | Blockers | Target Deliverables | Implementation Location | Acceptance Evidence |
+| --- | --- | --- | --- | --- |
+| Media AI pipeline | Audio normalization, ASR/MT/TTS execution, and real output streaming are missing. Pipeline emits fake events via `SequentialStub`. | Production pipeline service with overlapping stages, FFmpeg normalization worker, Whisper ASR runner, MarianMT/Bergamot translator, Coqui/Bark TTS, subtitle assembler. | `packages/go/backend/media/normalize.go`, `packages/go/backend/asr/whisper.go`, `packages/go/backend/translation/marian.go`, `packages/go/backend/tts/coqui.go`, `packages/go/backend/output/subtitle.go`. Replace stub at `packages/go/backend/pipeline/pipeline.go:17-73` | End-to-end demo translating representative streams with latency telemetry; CI integration suite passing; pipeline runbooks published. |
+| Platform resilience | Homegrown Postgres client at `packages/go/backend/postgres/client.go` concatenates SQL strings; Redis client at `packages/go/backend/redis/client.go` uses raw RESP without pooling. | `pgx` + migration tooling, resilient Redis client, connection pooling, structured retry/backoff policies. | Refactor `packages/go/backend/postgres/` to use `pgx`, add `packages/go/backend/postgres/migrations/`. Replace `packages/go/backend/redis/client.go` with `go-redis` wrapper. | Load test showing stable throughput, automated health checks in CI/CD, regression tests for failure cases. |
+| UX & casting | Dashboard at `apps/web/app/page.tsx` lacks latency insights, casting flows, accessibility accommodations. | Next.js dashboard with translation controls, buffering indicators, Chromecast/AirPlay flows, accessibility audit fixes. | `apps/web/app/components/CastingControls.tsx`, `apps/web/app/components/LatencyIndicator.tsx`, `packages/go/backend/casting/chromecast.go`, `packages/go/backend/casting/airplay.go` | Playwright suite covering casting flows; WCAG-focused checklist complete. |
+| Security & compliance | No enforced auth, auditing, or compliance documentation. | NextAuth + Go JWT integration, RBAC, audit logging schema, compliance guide. | `apps/api/cmd/server/auth.go`, `apps/api/cmd/server/middleware/auth.go`, `apps/web/app/api/auth/[...nextauth]/route.ts`, `docs/compliance.md` | Pen-test checklist signed off, retention purge APIs working, `docs/compliance.md` finalized. |
+| Packaging & support | No installers, update channel, or support process. | Build scripts for macOS/Windows/Linux, model bundle distribution plan, support/rollback runbooks. | `build/installers/`, `build/models/`, `docs/deployment.md`, `docs/support-runbook.md` | Installer smoke tests recorded, support docs stored in repo, release checklist approved. |
 
 ---
 
 ## Current Repository Snapshot
 
-- **Backend API (`apps/api`)** – Exposes health, session CRUD, and WebSocket streaming endpoints. Persists sessions through a homegrown Postgres client (`packages/go/backend/postgres`) that composes SQL strings manually via a thin executor abstraction, and publishes ingestion/status events over custom RESP helpers in `packages/go/backend/queue` and `packages/go/backend/status`.
-- **Worker (`apps/worker`)** – Consumes Redis ingestion jobs, loads session metadata, and now distributes work across a configurable goroutine pool while still delegating to the sequential pipeline stub (`packages/go/backend/pipeline`). The worker emits richer lifecycle telemetry but continues to depend on handcrafted RESP helpers for Redis connectivity.
-- **Media Ingestion (`packages/go/backend/ingestion`, `apps/worker/cmd/ingestion`)** – Provides production-ready HLS and RTMP adapters with jitter buffering, reconnection policies, and metrics counters plus an operator warm-up loop that validates stream availability before advancing the pipeline.
-- **Shared Schemas & Packages** – JSON Schema definitions live in `packages/schemas`. Backend packages define shared session models, Redis pub/sub contracts, and a stub pipeline runner to keep API/worker integration tests hermetic.
-- **Frontend (`apps/web`)** – Next.js dashboard for registering sessions, browsing persisted jobs, and monitoring live status streams. React Query caches session fetches, and server actions proxy API calls to validate backend wiring during development.
-- **Tooling & Operations** – Docker Compose orchestrates Postgres, Redis, API, worker, and web services. GitHub Actions (`.github/workflows/ci.yml`) run Go unit tests, golangci-lint, PNPM lint/test, and container builds on every change. Makefile targets wrap `docker compose`, `pnpm`, and `go test` flows for contributors.
+### Implemented Components
+
+| Component | Location | Status | Test Coverage |
+| --- | --- | --- | --- |
+| **Backend API** | `apps/api/cmd/server/` | Production-ready endpoints | Tested |
+| - Health endpoint | `apps/api/cmd/server/main.go` | `GET /healthz` | Yes |
+| - Session handlers | `apps/api/cmd/server/session.go` | CRUD operations | Yes |
+| - WebSocket status | `apps/api/cmd/server/status.go` | Real-time streaming | Yes |
+| **Worker** | `apps/worker/cmd/worker/main.go` | Goroutine pool with bounded concurrency | Tested |
+| - Ingestion orchestrator | `apps/worker/cmd/ingestion/` | Stream warm-up validation | Tested |
+| **Ingestion Adapters** | `packages/go/backend/ingestion/` | | |
+| - HLS adapter | `packages/go/backend/ingestion/hls.go` | Playlist parsing, segment fetch | Tested |
+| - RTMP adapter | `packages/go/backend/ingestion/rtmp.go` | RTMP protocol handling | Tested |
+| - File adapter | `packages/go/backend/ingestion/file.go` | Local media replay | Tested |
+| - Source interface | `packages/go/backend/ingestion/source.go` | Shared `StreamSource` contract | N/A |
+| **Data Layer** | `packages/go/backend/` | | |
+| - Session models | `packages/go/backend/session/session.go` | DTOs for translation sessions | N/A |
+| - Postgres store | `packages/go/backend/postgres/store.go` | Session CRUD | Tested |
+| - Postgres client | `packages/go/backend/postgres/client.go` | **Technical debt: manual SQL** | Tested |
+| - Redis queue | `packages/go/backend/queue/queue.go` | LPUSH/BRPOP operations | Tested |
+| - Redis status | `packages/go/backend/status/redis.go` | Pub/sub for events | Tested |
+| - Redis client | `packages/go/backend/redis/client.go` | **Technical debt: raw RESP** | **Not tested** |
+| **Pipeline** | `packages/go/backend/pipeline/pipeline.go` | `SequentialStub` emits fake events | Tested |
+| **Schemas** | `packages/schemas/translation-session.schema.json` | JSON Schema validation | N/A |
+| **Frontend** | `apps/web/app/page.tsx` | Dashboard with session form + status | **Not tested** |
+| **Infrastructure** | | | |
+| - Docker stack | `docker-compose.yml` | All services orchestrated | N/A |
+| - CI pipeline | `.github/workflows/ci.yml` | Tests, lint, Docker builds | N/A |
+
+### Unimplemented Components
+
+| Component | Target Location | Blocker |
+| --- | --- | --- |
+| DASH adapter | `packages/go/backend/ingestion/dash.go` | Returns "not implemented" error in `apps/worker/cmd/ingestion/ingestor.go:97-98` |
+| WebRTC adapter | `packages/go/backend/ingestion/webrtc.go` | Not started |
+| Audio normalization | `packages/go/backend/media/normalize.go` | Not started |
+| ASR service | `packages/go/backend/asr/whisper.go` | Stubbed in pipeline |
+| Translation service | `packages/go/backend/translation/marian.go` | Stubbed in pipeline |
+| TTS service | `packages/go/backend/tts/coqui.go` | Not started |
+| Subtitle generator | `packages/go/backend/output/subtitle.go` | Not started |
+| Authentication | `apps/api/cmd/server/auth.go` | Not started |
+| Casting | `packages/go/backend/casting/` | Not started |
+| Frontend tests | `apps/web/__tests__/` | Not started |
 
 This snapshot informs the phase updates below by grounding planned work against what already exists. The analysis also surfaced near-term engineering leverage points captured in the gap analysis.
 
 ### Gap Analysis & Recommended Updates
 
-1. **Storage and Data Safety** – The custom Postgres executor concatenates SQL literals and returns raw string slices. Introduce a battle-tested driver such as `jackc/pgx` (or at minimum parameterized statements) plus migration tooling to avoid injection risks, encoding bugs, and schema drift. Elevate row decoding to strongly typed structs and centralize connection pooling.
-2. **Queue & Streaming Resilience** – Redis access is implemented via handcrafted RESP writers/readers without reconnection, authentication, or backpressure controls. Wrap these helpers behind an interface backed by a resilient client (e.g., `redis/go-redis`) and layer in circuit breakers, tracing, and health probes so ingestion pressure does not stall the worker.
-3. **Pipeline Orchestration** – The worker now distributes ingestion jobs across a goroutine pool, but each job still executes the sequential stub that serializes ingestion, ASR, and translation. Promote a cancellable, event-sourced state machine so upcoming ASR/translation stages can overlap work, stream partial results, and emit granular progress once the media stack lands.
-4. **Async IO & Backpressure** – Redis interactions hand-roll RESP commands and open a brand new TCP connection for every `LPUSH`, `BRPOP`, and `PUBLISH`, preventing connection reuse or pipelining. Replace these single-flight calls with pooled clients that can multiplex requests, stream pub/sub messages, and expose buffer pressure so the API can shed load instead of blocking request handlers.
-5. **Observability & QA Depth** – Expand structured logging, metrics, and tracing across API and worker boundaries. Add golden integration tests that boot ephemeral Postgres/Redis containers, validate schema migrations, and assert end-to-end queue-to-websocket delivery to guard against protocol regressions.
-6. **Frontend Feedback Loop** – The dashboard polls REST endpoints for history and listens to WebSockets for live status, but it does not surface retry/error states. Introduce Suspense-friendly data hooks, optimistic updates for session registration, and instrumentation for websocket disconnects to close the operator loop.
-7. **Media Coverage Gaps** – The new ingestion adapters cover HLS, RTMP, and now local file streams. Expand coverage to DASH and WebRTC while layering in packet loss metrics and integration hooks for downstream normalization.
+| # | Gap | Current Location | Target Location | Priority |
+|---|-----|-----------------|-----------------|----------|
+| 1 | **Storage and Data Safety** – Custom Postgres executor concatenates SQL literals, risking injection and encoding bugs. | `packages/go/backend/postgres/client.go` | Replace with `jackc/pgx`, add migrations to `packages/go/backend/postgres/migrations/` | High |
+| 2 | **Queue & Streaming Resilience** – Redis access via handcrafted RESP writers without reconnection, auth, or backpressure. | `packages/go/backend/redis/client.go`, `packages/go/backend/queue/queue.go`, `packages/go/backend/status/redis.go` | Replace with `redis/go-redis` in `packages/go/backend/redis/`, add circuit breakers | High |
+| 3 | **Pipeline Orchestration** – Worker executes `SequentialStub` that serializes fake events instead of real pipeline stages. | `packages/go/backend/pipeline/pipeline.go:17-73` | Implement real stages in `packages/go/backend/asr/`, `packages/go/backend/translation/`, `packages/go/backend/output/` | Critical |
+| 4 | **Async IO & Backpressure** – Each Redis operation opens new TCP connection. No pooling or pipelining. | `packages/go/backend/redis/client.go` | Implement connection pooling with `go-redis`, add backpressure metrics | High |
+| 5 | **Observability & QA Depth** – Only structured logs via zap stub. No tracing, metrics, or integration tests. | `third_party/go.uber.org/zap/` | Add OpenTelemetry in `packages/go/backend/telemetry/`, Prometheus metrics, integration tests in `tests/integration/` | Medium |
+| 6 | **Frontend Feedback Loop** – Dashboard doesn't surface retry/error states or websocket disconnection handling. | `apps/web/app/page.tsx` | Add error boundaries, retry UI in `apps/web/app/components/`, add tests in `apps/web/__tests__/` | Medium |
+| 7 | **Media Coverage Gaps** – Missing DASH and WebRTC adapters. | `apps/worker/cmd/ingestion/ingestor.go:97-98` returns error | Implement `packages/go/backend/ingestion/dash.go`, `packages/go/backend/ingestion/webrtc.go` | Medium |
 
 These updates are reflected in the phase adjustments below.
 
@@ -90,17 +129,17 @@ These updates are reflected in the phase adjustments below.
 
 **Detailed Task Plan**
 
-| Epic | Task | Owner | Dependencies | Definition of Done |
-| --- | --- | --- | --- | --- |
-| Audio normalization | Implement FFmpeg-based normalization worker producing PCM chunks stored in Redis streams. | Media team | Finalize chunk schema in `packages/schemas`. | Worker emits normalized chunk events; integration tests (`tests/pipeline/audio_normalization_test.go`) pass. |
-| Audio normalization | Add health/metrics endpoints exposing lag and error counters. | Platform team | Normalization worker merged. | Prometheus metrics exported; alerts defined in `observability/rules.yaml`. |
-| ASR | Build Whisper runner with GPU/CPU profiles including batching controls. | Media team | Normalized audio stream available. | Runner translates sample corpora in CI; hardware tuning doc added to `docs/asr-selection.md`. |
-| Translation | Implement MarianMT/Bergamot translator service with caching and batching. | Media team | Timestamped transcripts from ASR. | Translator returns aligned segments; load test demonstrates <3 s added latency. |
-| Subtitle output | Create subtitle composer writing SRT/VTT plus WebSocket diff stream. | Media team | Translation segments ready. | Generated artifacts validated by Playwright visual snapshot; API returns downloadable files. |
-| Persistence | Swap to `pgx`, add migrations via `golang-migrate`, and enforce DAO layer. | Platform team | None | CI migration job passes; CRUD regression tests cover new DAO. |
-| Queue | Replace RESP helpers with `go-redis`, add backpressure + reconnection logic. | Platform team | None | Chaos test dropping Redis demonstrates graceful retry; metrics for queue depth emitted. |
-| Observability | Instrument OpenTelemetry tracing across API, worker, pipeline. | Platform team | Pipeline stages implemented. | Traces viewable in Jaeger; SLO dashboard screenshot stored in `docs/observability/README.md`. |
-| Frontend | Surface pipeline stage status, error toasts, retry controls. | Web team | API/worker telemetry endpoints ready. | Playwright tests (`tests/e2e/session-lifecycle.spec.ts`) green; accessibility audit passes. |
+| Epic | Task | Implementation Location | Owner | Dependencies | Definition of Done |
+| --- | --- | --- | --- | --- | --- |
+| Audio normalization | Implement FFmpeg-based normalization worker producing PCM chunks stored in Redis streams. | `packages/go/backend/media/normalize.go`, `packages/go/backend/media/ffmpeg.go` | Media team | Finalize chunk schema in `packages/schemas/audio-chunk.schema.json`. | Worker emits normalized chunk events; integration tests (`tests/pipeline/audio_normalization_test.go`) pass. |
+| Audio normalization | Add health/metrics endpoints exposing lag and error counters. | `packages/go/backend/media/metrics.go`, `observability/rules.yaml` | Platform team | Normalization worker merged. | Prometheus metrics exported; alerts defined in `observability/rules.yaml`. |
+| ASR | Build Whisper runner with GPU/CPU profiles including batching controls. | `packages/go/backend/asr/whisper.go`, `packages/go/backend/asr/runner.go` | Media team | Normalized audio stream available. | Runner translates sample corpora in CI; hardware tuning doc added to `docs/asr-selection.md`. |
+| Translation | Implement MarianMT/Bergamot translator service with caching and batching. | `packages/go/backend/translation/marian.go`, `packages/go/backend/translation/cache.go` | Media team | Timestamped transcripts from ASR. | Translator returns aligned segments; load test demonstrates <3 s added latency. |
+| Subtitle output | Create subtitle composer writing SRT/VTT plus WebSocket diff stream. | `packages/go/backend/output/subtitle.go`, `packages/go/backend/output/srt.go`, `packages/go/backend/output/vtt.go` | Media team | Translation segments ready. | Generated artifacts validated by Playwright visual snapshot; API returns downloadable files via `apps/api/cmd/server/subtitles.go`. |
+| Persistence | Swap to `pgx`, add migrations via `golang-migrate`, and enforce DAO layer. | Refactor `packages/go/backend/postgres/client.go`, add `packages/go/backend/postgres/migrations/*.sql` | Platform team | None | CI migration job passes; CRUD regression tests cover new DAO. |
+| Queue | Replace RESP helpers with `go-redis`, add backpressure + reconnection logic. | Refactor `packages/go/backend/redis/client.go`, `packages/go/backend/queue/queue.go` | Platform team | None | Chaos test dropping Redis demonstrates graceful retry; metrics for queue depth emitted. |
+| Observability | Instrument OpenTelemetry tracing across API, worker, pipeline. | `packages/go/backend/telemetry/tracer.go`, `packages/go/backend/telemetry/metrics.go` | Platform team | Pipeline stages implemented. | Traces viewable in Jaeger; SLO dashboard screenshot stored in `docs/observability/README.md`. |
+| Frontend | Surface pipeline stage status, error toasts, retry controls. | `apps/web/app/components/PipelineStatus.tsx`, `apps/web/app/components/ErrorToast.tsx` | Web team | API/worker telemetry endpoints ready. | Playwright tests (`tests/e2e/session-lifecycle.spec.ts`) green; accessibility audit passes. |
 
 **Key Workstreams**
 
@@ -156,12 +195,12 @@ These updates are reflected in the phase adjustments below.
 
 **Key Workstreams & Tasks**
 
-| Epic | Focus | Tasks |
-| --- | --- | --- |
-| Dubbing | High-fidelity translated audio | 1. Implement TTS microservice orchestrating Coqui/Bark voices. 2. Build audio alignment module leveraging subtitle timestamps. 3. Expose gRPC/REST endpoints for dubbed segments with caching + retry. |
-| Casting | Device playback | 1. Deliver Chromecast CAF receiver app with OAuth-based device linking. 2. Ship AirPlay RAOP bridge with buffering controls. 3. Add frontend casting manager with device discovery and failure UX. |
-| Security | Auth hardening | 1. Wire NextAuth to Go JWT issuer with refresh/rotation. 2. Add role-based authorization checks on session APIs. 3. Instrument audit logging and admin review UI. |
-| Latency mgmt | QoS | 1. Implement adaptive buffering heuristics reading pipeline lag metrics. 2. Add operator controls for buffer targets per session. 3. Surface alerts when SLA breaches occur. |
+| Epic | Focus | Implementation Location | Tasks |
+| --- | --- | --- | --- |
+| Dubbing | High-fidelity translated audio | `packages/go/backend/tts/coqui.go`, `packages/go/backend/tts/bark.go`, `packages/go/backend/tts/alignment.go` | 1. Implement TTS microservice orchestrating Coqui/Bark voices. 2. Build audio alignment module leveraging subtitle timestamps. 3. Expose gRPC/REST endpoints for dubbed segments with caching + retry at `apps/api/cmd/server/dubbing.go`. |
+| Casting | Device playback | `packages/go/backend/casting/chromecast.go`, `packages/go/backend/casting/airplay.go`, `apps/web/app/components/CastingManager.tsx` | 1. Deliver Chromecast CAF receiver app with OAuth-based device linking. 2. Ship AirPlay RAOP bridge with buffering controls. 3. Add frontend casting manager with device discovery and failure UX. |
+| Security | Auth hardening | `apps/api/cmd/server/auth.go`, `apps/api/cmd/server/middleware/auth.go`, `apps/web/app/api/auth/[...nextauth]/route.ts` | 1. Wire NextAuth to Go JWT issuer with refresh/rotation. 2. Add role-based authorization checks on session APIs. 3. Instrument audit logging at `packages/go/backend/audit/logger.go` and admin review UI. |
+| Latency mgmt | QoS | `packages/go/backend/qos/buffer.go`, `apps/web/app/components/LatencyControls.tsx` | 1. Implement adaptive buffering heuristics reading pipeline lag metrics. 2. Add operator controls for buffer targets per session. 3. Surface alerts when SLA breaches occur via `observability/alerts/latency.yaml`. |
 
 **Exit Validation**
 
@@ -185,12 +224,12 @@ These updates are reflected in the phase adjustments below.
 
 **Key Workstreams**
 
-| Theme | Deliverables | Responsible Team |
-| --- | --- | --- |
-| Model operations | GPU/CPU profile documentation, automated model download/verification scripts, staged language rollout playbooks. | AI platform |
-| Observability maturity | Production dashboards, alert runbooks, synthetic monitoring pipeline, failure scenario regression suite. | SRE |
-| Privacy & compliance | Data retention tooling, compliance checklist completion, legal review sign-off, localized privacy policy. | Security/Legal |
-| Packaging & deployment | Cross-platform installers, offline bundle packaging, release/rollback automation, support knowledge base. | Release engineering |
+| Theme | Deliverables | Implementation Location | Responsible Team |
+| --- | --- | --- | --- |
+| Model operations | GPU/CPU profile documentation, automated model download/verification scripts, staged language rollout playbooks. | `build/models/`, `scripts/download-models.sh`, `docs/hardware-profiles.md` | AI platform |
+| Observability maturity | Production dashboards, alert runbooks, synthetic monitoring pipeline, failure scenario regression suite. | `observability/dashboards/`, `observability/alerts/`, `docs/runbooks/`, `tests/chaos/` | SRE |
+| Privacy & compliance | Data retention tooling, compliance checklist completion, legal review sign-off, localized privacy policy. | `packages/go/backend/retention/purge.go`, `docs/compliance.md`, `docs/privacy-policy.md` | Security/Legal |
+| Packaging & deployment | Cross-platform installers, offline bundle packaging, release/rollback automation, support knowledge base. | `build/installers/macos/`, `build/installers/windows/`, `build/installers/linux/`, `docs/deployment.md` | Release engineering |
 
 **Exit Criteria**
 
@@ -208,11 +247,11 @@ These updates are reflected in the phase adjustments below.
 
 **Key Workstreams**
 
-| Focus Area | Planned Tasks | Success Criteria |
-| --- | --- | --- |
-| Multi-tenant architecture | 1. Partition data schemas by tenant with row-level security. 2. Build quota enforcement service. 3. Provide tenant administration UI. | Pen-test verifying isolation, automated quota tests. |
-| Scalability & resilience | 1. Define autoscaling policies for API/worker deployments. 2. Run chaos experiments covering Redis/Postgres outages. 3. Tune cold-start behavior for model loading. | Observed recovery within SLO; chaos reports archived. |
-| Operations | 1. Publish on-call runbooks and incident response templates. 2. Conduct gamedays with recorded learnings. 3. Establish release/rollback checklist with sign-offs. | Ops leadership approval; post-gameday actions closed. |
+| Focus Area | Planned Tasks | Implementation Location | Success Criteria |
+| --- | --- | --- | --- |
+| Multi-tenant architecture | 1. Partition data schemas by tenant with row-level security. 2. Build quota enforcement service. 3. Provide tenant administration UI. | `packages/go/backend/postgres/migrations/tenant_rls.sql`, `packages/go/backend/quota/`, `apps/web/app/admin/tenants/` | Pen-test verifying isolation, automated quota tests. |
+| Scalability & resilience | 1. Define autoscaling policies for API/worker deployments. 2. Run chaos experiments covering Redis/Postgres outages. 3. Tune cold-start behavior for model loading. | `deploy/k8s/hpa.yaml`, `tests/chaos/`, `packages/go/backend/models/warmup.go` | Observed recovery within SLO; chaos reports archived. |
+| Operations | 1. Publish on-call runbooks and incident response templates. 2. Conduct gamedays with recorded learnings. 3. Establish release/rollback checklist with sign-offs. | `docs/runbooks/`, `docs/incident-response.md`, `docs/release-checklist.md` | Ops leadership approval; post-gameday actions closed. |
 
 **Exit Criteria**
 
@@ -234,16 +273,16 @@ These updates are reflected in the phase adjustments below.
 
 ## Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-| --- | --- | --- |
-| GPU-dependent models exceed local hardware budgets | Pipeline stalls or quality degradation | Provide tiered model profiles (CPU-only, GPU-accelerated) and auto-detect capabilities. |
-| Stream format variability causes ingestion failures | Translation sessions fail to start | Maintain pluggable adapters with comprehensive integration tests and fallback buffering strategies. |
-| Latency creep across pipeline stages | User experience suffers | Instrument each stage with metrics, enable adaptive buffering, and iterate on model/queue tuning. |
-| Licensing uncertainties for models/components | Deployment delays | Track licenses in `docs/licenses/` and obtain approvals early; prefer permissive models. |
-| Casting interoperability issues | Inconsistent playback experience | Implement robust device discovery, provide manual fallback instructions, and gather telemetry per device type. |
-| Homegrown Postgres/Redis protocol implementations diverge from upstream behavior | Connection edge cases or performance regressions in production | Expand integration coverage against real services, add fuzz/integration tests for protocol handlers, and evaluate migration to maintained clients before GA. |
-| Manual SQL concatenation introduces injection/encoding risk | Security and data integrity issues | Adopt parameterized queries via `pgx` or `sqlc`, enforce input validation at API edges, and add static analysis (`gosec`) to CI. |
-| Lack of per-stage backpressure controls in workers | Queue storms starve ingestion or overload ASR/translation GPUs | Implement bounded goroutine pools per stage, propagate context deadlines, and expose queue depth metrics with autoscaling hooks. |
+| Risk | Impact | Current Location | Mitigation |
+| --- | --- | --- | --- |
+| GPU-dependent models exceed local hardware budgets | Pipeline stalls or quality degradation | `packages/go/backend/asr/`, `packages/go/backend/tts/` (to create) | Provide tiered model profiles (CPU-only, GPU-accelerated) and auto-detect capabilities via `packages/go/backend/models/detector.go`. |
+| Stream format variability causes ingestion failures | Translation sessions fail to start | `packages/go/backend/ingestion/` | Maintain pluggable adapters with comprehensive integration tests and fallback buffering strategies. Add DASH/WebRTC adapters. |
+| Latency creep across pipeline stages | User experience suffers | Pipeline stub at `packages/go/backend/pipeline/pipeline.go` | Instrument each stage with metrics via `packages/go/backend/telemetry/`, enable adaptive buffering, and iterate on model/queue tuning. |
+| Licensing uncertainties for models/components | Deployment delays | N/A | Track licenses in `docs/licenses/` and obtain approvals early; prefer permissive models. |
+| Casting interoperability issues | Inconsistent playback experience | `packages/go/backend/casting/` (to create) | Implement robust device discovery, provide manual fallback instructions, and gather telemetry per device type. |
+| Homegrown Postgres/Redis protocol implementations | Connection edge cases or performance regressions | `packages/go/backend/postgres/client.go`, `packages/go/backend/redis/client.go` | Replace with `pgx` and `go-redis` before GA. Add integration tests in `tests/integration/`. |
+| Manual SQL concatenation introduces injection risk | Security and data integrity issues | `packages/go/backend/postgres/client.go` | Adopt parameterized queries via `pgx` or `sqlc`, enforce input validation at API edges, and add static analysis (`gosec`) to CI. |
+| Lack of per-stage backpressure controls | Queue storms starve ingestion or overload GPUs | `apps/worker/cmd/worker/main.go` | Implement bounded goroutine pools per stage in `packages/go/backend/pipeline/`, propagate context deadlines, expose queue depth metrics. |
 
 ---
 
@@ -257,23 +296,425 @@ These updates are reflected in the phase adjustments below.
 
 ### Phase 2
 
-- [x] Ingestion adapters with automated tests for HLS and RTMP sample streams.
-- [ ] Audio normalization service producing timestamped PCM chunks via Redis queues.
-- [ ] ASR + translation services with documented model selection and cached translations.
-- [ ] Subtitle generator delivering synchronized SRT/VTT outputs via WebSocket APIs.
-- [x] Minimal Next.js UI for session setup, language controls, and live subtitles.
+| Deliverable | Status | Implementation Location |
+| --- | --- | --- |
+| Ingestion adapters (HLS, RTMP) | Done | `packages/go/backend/ingestion/hls.go`, `rtmp.go`, `file.go` |
+| Audio normalization service | Not started | `packages/go/backend/media/normalize.go` |
+| ASR + translation services | Not started | `packages/go/backend/asr/whisper.go`, `packages/go/backend/translation/marian.go` |
+| Subtitle generator | Not started | `packages/go/backend/output/subtitle.go`, `srt.go`, `vtt.go` |
+| Next.js UI for session setup | Done | `apps/web/app/page.tsx` |
 
 ### Phase 3
 
-- [ ] TTS dubbing pipeline providing synchronized audio output options.
-- [ ] Casting-ready frontend with latency buffering controls and device telemetry.
-- [ ] OAuth-backed authentication and session rate limiting validated via tests.
+| Deliverable | Status | Implementation Location |
+| --- | --- | --- |
+| TTS dubbing pipeline | Not started | `packages/go/backend/tts/coqui.go`, `bark.go` |
+| Casting frontend | Not started | `apps/web/app/components/CastingManager.tsx` |
+| OAuth authentication | Not started | `apps/api/cmd/server/auth.go`, `apps/web/app/api/auth/` |
 
 ### Phase 4
 
-- [ ] Observability stack (dashboards, alerts, runbooks) covering pipeline stages.
-- [ ] Compliance documentation, privacy controls, and data lifecycle tooling.
-- [ ] Distribution artifacts and deployment guides for offline-first installations.
+| Deliverable | Status | Implementation Location |
+| --- | --- | --- |
+| Observability stack | Not started | `packages/go/backend/telemetry/`, `observability/` |
+| Compliance documentation | Not started | `docs/compliance.md`, `docs/privacy-policy.md` |
+| Distribution artifacts | Not started | `build/installers/`
+
+---
+
+## Scaffold Implementation for Testability
+
+This section describes how to implement a fully testable scaffold that enables end-to-end testing without requiring real AI models, FFmpeg binaries, or external services. Each component should have both a production implementation and a testable stub.
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           INTERFACE LAYER                                    │
+│  Each component defines an interface that both real and stub implement       │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+          ┌─────────────────────────┼─────────────────────────┐
+          ▼                         ▼                         ▼
+   ┌─────────────┐          ┌─────────────┐          ┌─────────────┐
+   │   REAL      │          │   STUB      │          │   MOCK      │
+   │ Production  │          │ Deterministic│          │ Test-only   │
+   │ FFmpeg/AI   │          │ Canned data │          │ Assertions  │
+   └─────────────┘          └─────────────┘          └─────────────┘
+```
+
+### Component Scaffold Specifications
+
+#### 1. Audio Normalizer
+
+**Interface Location:** `packages/go/backend/media/normalizer.go`
+
+```go
+// Normalizer extracts and normalizes audio from media streams
+type Normalizer interface {
+    // Normalize processes a media source and emits PCM chunks
+    Normalize(ctx context.Context, source io.Reader) (<-chan AudioChunk, error)
+    // Health returns normalizer status
+    Health() HealthStatus
+}
+
+type AudioChunk struct {
+    Timestamp   time.Duration
+    SampleRate  int
+    Channels    int
+    PCMData     []byte
+    RMS         float64  // For testing assertions
+}
+```
+
+**Production Implementation:** `packages/go/backend/media/ffmpeg_normalizer.go`
+- Wraps FFmpeg binary via exec
+- Streams PCM chunks to channel
+
+**Stub Implementation:** `packages/go/backend/media/stub_normalizer.go`
+- Reads from `testdata/audio/` sample files
+- Emits deterministic chunks with predictable timestamps
+- Configurable delay between chunks for latency testing
+
+**Test Data:** `packages/go/backend/media/testdata/`
+```
+testdata/
+├── audio/
+│   ├── sample_en_10s.pcm      # 10 seconds English speech
+│   ├── sample_es_10s.pcm      # 10 seconds Spanish speech
+│   └── silence_5s.pcm         # 5 seconds silence
+└── expected/
+    ├── chunks_en_10s.json     # Expected chunk metadata
+    └── timestamps.json        # Expected timing data
+```
+
+#### 2. ASR (Speech Recognition)
+
+**Interface Location:** `packages/go/backend/asr/recognizer.go`
+
+```go
+// Recognizer transcribes audio chunks to text
+type Recognizer interface {
+    // Recognize processes audio and returns transcription
+    Recognize(ctx context.Context, chunks <-chan AudioChunk) (<-chan Transcript, error)
+    // LoadModel loads a specific model profile
+    LoadModel(profile ModelProfile) error
+    // Health returns recognizer status
+    Health() HealthStatus
+}
+
+type Transcript struct {
+    SessionID   string
+    Text        string
+    StartTime   time.Duration
+    EndTime     time.Duration
+    Confidence  float64
+    Language    string
+    Words       []Word  // Word-level timing for alignment
+}
+
+type Word struct {
+    Text      string
+    StartTime time.Duration
+    EndTime   time.Duration
+}
+```
+
+**Production Implementation:** `packages/go/backend/asr/whisper_recognizer.go`
+- Wraps whisper.cpp or ONNX runtime
+- GPU/CPU profile selection
+
+**Stub Implementation:** `packages/go/backend/asr/stub_recognizer.go`
+- Returns canned transcripts from `testdata/transcripts/`
+- Maps input audio hashes to predetermined outputs
+- Simulates processing delay (configurable)
+- Can inject errors for failure testing
+
+**Test Data:** `packages/go/backend/asr/testdata/`
+```
+testdata/
+├── transcripts/
+│   ├── en_hello_world.json    # "Hello world" transcript
+│   ├── es_hola_mundo.json     # Spanish equivalent
+│   └── multi_speaker.json     # Multiple speakers
+└── mappings/
+    └── audio_to_transcript.json  # Hash → transcript mapping
+```
+
+#### 3. Translation Service
+
+**Interface Location:** `packages/go/backend/translation/translator.go`
+
+```go
+// Translator converts text between languages
+type Translator interface {
+    // Translate converts text to target language
+    Translate(ctx context.Context, text string, sourceLang, targetLang string) (Translation, error)
+    // TranslateStream processes streaming transcripts
+    TranslateStream(ctx context.Context, transcripts <-chan Transcript, targetLang string) (<-chan Translation, error)
+    // SupportedLanguages returns available language pairs
+    SupportedLanguages() []LanguagePair
+}
+
+type Translation struct {
+    SourceText    string
+    TranslatedText string
+    SourceLang    string
+    TargetLang    string
+    Confidence    float64
+    Timestamp     time.Duration
+}
+```
+
+**Production Implementation:** `packages/go/backend/translation/marian_translator.go`
+- Wraps MarianMT or Bergamot
+- Caching layer for repeated phrases
+
+**Stub Implementation:** `packages/go/backend/translation/stub_translator.go`
+- Dictionary-based translation from `testdata/dictionaries/`
+- Deterministic outputs for testing
+- Configurable latency simulation
+
+**Test Data:** `packages/go/backend/translation/testdata/`
+```
+testdata/
+├── dictionaries/
+│   ├── en_es.json             # English → Spanish mappings
+│   ├── en_fr.json             # English → French mappings
+│   └── common_phrases.json    # Frequently used phrases
+└── expected/
+    └── translation_outputs.json
+```
+
+#### 4. Subtitle Generator
+
+**Interface Location:** `packages/go/backend/output/generator.go`
+
+```go
+// SubtitleGenerator creates subtitle files from translations
+type SubtitleGenerator interface {
+    // GenerateSRT creates SRT format subtitles
+    GenerateSRT(ctx context.Context, translations <-chan Translation) (io.Reader, error)
+    // GenerateVTT creates WebVTT format subtitles
+    GenerateVTT(ctx context.Context, translations <-chan Translation) (io.Reader, error)
+    // StreamSubtitles provides real-time subtitle updates
+    StreamSubtitles(ctx context.Context, translations <-chan Translation) (<-chan SubtitleEvent, error)
+}
+
+type SubtitleEvent struct {
+    Type      string  // "add", "update", "remove"
+    Index     int
+    StartTime time.Duration
+    EndTime   time.Duration
+    Text      string
+}
+```
+
+**Production Implementation:** `packages/go/backend/output/subtitle_generator.go`
+**Stub Implementation:** `packages/go/backend/output/stub_generator.go`
+
+#### 5. TTS (Text-to-Speech)
+
+**Interface Location:** `packages/go/backend/tts/synthesizer.go`
+
+```go
+// Synthesizer converts text to speech audio
+type Synthesizer interface {
+    // Synthesize generates audio from text
+    Synthesize(ctx context.Context, text string, voice VoiceProfile) (AudioSegment, error)
+    // SynthesizeStream processes streaming translations
+    SynthesizeStream(ctx context.Context, translations <-chan Translation, voice VoiceProfile) (<-chan AudioSegment, error)
+    // AvailableVoices returns supported voice profiles
+    AvailableVoices(lang string) []VoiceProfile
+}
+
+type AudioSegment struct {
+    PCMData     []byte
+    SampleRate  int
+    Duration    time.Duration
+    Timestamp   time.Duration  // Alignment with source
+}
+```
+
+**Stub Implementation:** `packages/go/backend/tts/stub_synthesizer.go`
+- Returns pre-recorded audio segments from `testdata/voices/`
+- Maps text hashes to audio files
+
+#### 6. Pipeline Orchestrator
+
+**Interface Location:** `packages/go/backend/pipeline/runner.go`
+
+```go
+// Runner orchestrates the full translation pipeline
+type Runner interface {
+    // Run executes the pipeline for a session
+    Run(ctx context.Context, session *Session, publisher StatusPublisher) error
+    // Status returns current pipeline state
+    Status(sessionID string) PipelineStatus
+}
+
+type PipelineStatus struct {
+    Stage       string    // "ingestion", "normalization", "asr", "translation", "output"
+    State       string    // "pending", "running", "completed", "failed"
+    Progress    float64   // 0.0 - 1.0
+    LastUpdate  time.Time
+    Error       string
+}
+```
+
+**Production Implementation:** `packages/go/backend/pipeline/production_runner.go`
+- Wires real components together
+- Manages concurrency and backpressure
+
+**Stub Implementation (exists):** `packages/go/backend/pipeline/pipeline.go:SequentialStub`
+- Currently emits fake events
+- **Enhance to:** Wire stub components for realistic data flow
+
+**Testable Implementation:** `packages/go/backend/pipeline/testable_runner.go`
+- Wires all stub implementations together
+- Produces real (deterministic) outputs
+- Full end-to-end testability without external dependencies
+
+### Dependency Injection Setup
+
+**Location:** `packages/go/backend/di/container.go`
+
+```go
+// Container holds all service dependencies
+type Container struct {
+    Normalizer   media.Normalizer
+    Recognizer   asr.Recognizer
+    Translator   translation.Translator
+    Synthesizer  tts.Synthesizer
+    Generator    output.SubtitleGenerator
+    Runner       pipeline.Runner
+}
+
+// NewProductionContainer creates container with real implementations
+func NewProductionContainer(cfg Config) (*Container, error)
+
+// NewTestContainer creates container with all stubs
+func NewTestContainer() *Container
+
+// NewMixedContainer allows mixing real and stub components
+func NewMixedContainer(opts ...ContainerOption) *Container
+```
+
+### Test Harness
+
+**Location:** `tests/harness/`
+
+```
+tests/
+├── harness/
+│   ├── harness.go             # Main test harness setup
+│   ├── fixtures.go            # Test data loading
+│   └── assertions.go          # Custom test assertions
+├── integration/
+│   ├── pipeline_test.go       # End-to-end pipeline tests
+│   ├── api_test.go            # API integration tests
+│   └── websocket_test.go      # WebSocket streaming tests
+└── e2e/
+    ├── session_lifecycle_test.go
+    └── translation_flow_test.go
+```
+
+**Harness Usage:**
+
+```go
+func TestPipelineEndToEnd(t *testing.T) {
+    // Create test container with stubs
+    container := di.NewTestContainer()
+
+    // Create test session
+    session := &session.TranslationSession{
+        ID:             "test-session-001",
+        Source:         session.Source{Type: "file", URI: "testdata/sample.mp4"},
+        TargetLanguage: "es",
+    }
+
+    // Run pipeline
+    events := make(chan status.SessionStatusEvent, 100)
+    publisher := status.NewChannelPublisher(events)
+
+    err := container.Runner.Run(context.Background(), session, publisher)
+    require.NoError(t, err)
+
+    // Verify expected events
+    harness.AssertEventsMatch(t, events, []string{
+        "ingestion:running",
+        "normalization:running",
+        "asr:running",
+        "translation:running",
+        "output:running",
+        "output:completed",
+    })
+
+    // Verify outputs
+    subtitles := harness.LoadGeneratedSubtitles(t, session.ID)
+    assert.Contains(t, subtitles, "Hola mundo")
+}
+```
+
+### Environment Configuration
+
+**Location:** `configs/`
+
+```
+configs/
+├── production.yaml            # Real implementations
+├── development.yaml           # Mix of real and stubs
+├── testing.yaml               # All stubs
+└── ci.yaml                    # CI-specific settings
+```
+
+**Example `testing.yaml`:**
+
+```yaml
+pipeline:
+  normalizer: stub
+  recognizer: stub
+  translator: stub
+  synthesizer: stub
+  generator: stub
+
+stubs:
+  normalizer:
+    delay_ms: 100
+    chunk_size: 4096
+  recognizer:
+    delay_ms: 500
+    error_rate: 0.0
+  translator:
+    delay_ms: 200
+    dictionary: testdata/dictionaries/en_es.json
+```
+
+### Implementation Priority for Testability
+
+| Priority | Component | Files to Create | Effort |
+| --- | --- | --- | --- |
+| 1 | DI Container | `packages/go/backend/di/container.go` | Low |
+| 2 | Interface definitions | `packages/go/backend/*/interface.go` | Low |
+| 3 | Stub implementations | `packages/go/backend/*/stub_*.go` | Medium |
+| 4 | Test data | `packages/go/backend/*/testdata/` | Medium |
+| 5 | Test harness | `tests/harness/` | Medium |
+| 6 | Integration tests | `tests/integration/` | Medium |
+| 7 | Testable runner | `packages/go/backend/pipeline/testable_runner.go` | Medium |
+
+### Verification Checklist
+
+After implementing the scaffold:
+
+- [ ] `go test ./...` passes with all stubs
+- [ ] `docker compose -f docker-compose.test.yml up` runs full stack with stubs
+- [ ] Pipeline produces deterministic SRT/VTT output from test audio
+- [ ] WebSocket streams deliver expected status events
+- [ ] API endpoints return predictable responses
+- [ ] CI can run full integration suite without external dependencies
+- [ ] Test coverage reports show all paths exercised
+
+---
 
 ## Plan Maintenance & Governance
 

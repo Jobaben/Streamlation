@@ -6,14 +6,14 @@ Streamlation is **not ready** for a first retail release. Core AI translation st
 
 ### Architectural Closure Plan
 
-| Area | Current State | Readiness Gap | Architectural Actions |
-| --- | --- | --- | --- |
-| Media pipeline | Ingestion adapters in Go worker warm streams but emit stubbed pipeline events. | No audio normalization, ASR, MT, TTS, or mixed output graph. | Formalize stage APIs (`Normalize`, `Recognize`, `Translate`, `Synthesize`) with gRPC contracts, introduce Redis stream/topic routing, and define deterministic error handling + retries per stage. |
-| Casting & playback | UI exposes placeholder controls; no receiver services or buffering strategies. | Chromecast/AirPlay protocols, drift correction, device auth missing. | Design casting microservices with CAF receiver reference implementation, AirPlay RAOP bridge, and buffer alignment strategy tied to pipeline timestamps. |
-| Persistence & config | Postgres reached through handcrafted executor; Redis access via RESP helpers. | No connection pooling, migrations, secrets management. | Adopt `pgx` with migrations, parameterized queries, and config service; wrap Redis with managed client and centralize secrets via Vault/1Password-compatible loader. |
-| Security & compliance | Auth flows scoped to planning documents only. | No identity, RBAC, logging, or retention policies. | Specify identity provider abstraction, JWT lifecycle, auditing schema, and data retention policy with purge APIs. |
-| Observability | Structured logs only; minimal metrics. | No tracing, metrics, or alerting for pipeline/casting. | Establish OpenTelemetry spans, Prometheus metrics, Grafana dashboards, and SLO error budgets per pipeline stage. |
-| Distribution | Docker compose supports dev only. | No installers, update channels, or offline bundle packaging. | Architect build matrix for macOS/Windows/Linux, create model packaging spec, and define update manifest/rollback strategy. |
+| Area | Current State | Readiness Gap | Implementation Location | Architectural Actions |
+| --- | --- | --- | --- | --- |
+| Media pipeline | Ingestion adapters warm streams but emit stubbed pipeline events via `packages/go/backend/pipeline/pipeline.go:SequentialStub`. | No audio normalization, ASR, MT, TTS, or mixed output graph. | `packages/go/backend/media/normalize.go` (FFmpeg), `packages/go/backend/asr/whisper.go`, `packages/go/backend/translation/marian.go`, `packages/go/backend/tts/coqui.go`, `packages/go/backend/output/subtitle.go` | Formalize stage APIs (`Normalize`, `Recognize`, `Translate`, `Synthesize`) with gRPC contracts, introduce Redis stream/topic routing, and define deterministic error handling + retries per stage. |
+| Casting & playback | UI exposes placeholder controls in `apps/web/app/page.tsx`; no receiver services or buffering strategies. | Chromecast/AirPlay protocols, drift correction, device auth missing. | `apps/api/cmd/server/casting.go`, `packages/go/backend/casting/chromecast.go`, `packages/go/backend/casting/airplay.go` | Design casting microservices with CAF receiver reference implementation, AirPlay RAOP bridge, and buffer alignment strategy tied to pipeline timestamps. |
+| Persistence & config | Postgres via `packages/go/backend/postgres/` with manual SQL; Redis via `packages/go/backend/redis/client.go` with raw RESP. | No connection pooling, migrations, secrets management. | Replace with `pgx` in `packages/go/backend/postgres/`, add migrations in `packages/go/backend/postgres/migrations/`, replace Redis client with `go-redis` | Adopt `pgx` with migrations, parameterized queries, and config service; wrap Redis with managed client and centralize secrets via Vault/1Password-compatible loader. |
+| Security & compliance | Auth flows scoped to planning documents only. | No identity, RBAC, logging, or retention policies. | `apps/api/cmd/server/auth.go`, `apps/api/cmd/server/middleware/auth.go`, `apps/web/app/api/auth/` (NextAuth), `docs/compliance.md` | Specify identity provider abstraction, JWT lifecycle, auditing schema, and data retention policy with purge APIs. |
+| Observability | Structured logs via `third_party/go.uber.org/zap/`; minimal metrics. | No tracing, metrics, or alerting for pipeline/casting. | `packages/go/backend/telemetry/` (new), instrument `apps/api/` and `apps/worker/` handlers | Establish OpenTelemetry spans, Prometheus metrics, Grafana dashboards, and SLO error budgets per pipeline stage. |
+| Distribution | Docker compose (`docker-compose.yml`) supports dev only. | No installers, update channels, or offline bundle packaging. | `build/installers/` (macOS/Windows/Linux), `build/models/` (model bundles), `docs/deployment.md` | Architect build matrix for macOS/Windows/Linux, create model packaging spec, and define update manifest/rollback strategy. |
 
 Each action requires architectural artifacts (sequence diagrams, interface contracts, resource sizing) before implementation tasks begin.
 
@@ -126,9 +126,53 @@ Each action requires architectural artifacts (sequence diagrams, interface contr
 ---
 
 ## Implementation Progress Snapshot (Current Phase)
-- **Ingestion Adapters:** `packages/go/backend/ingestion` now houses HLS, RTMP, and file-based sources with jitter buffering, reconnect logic, metrics counters, and unit coverage for playlist churn, framing edge cases, and local media replay.
-- **Worker Concurrency:** `apps/worker/cmd/worker` fans ingestion jobs across a bounded goroutine pool while `apps/worker/cmd/ingestion` performs stream warm-up using the new adapters before the pipeline stub emits stage events.
-- **Operator Surface:** The Next.js dashboard (`apps/web`) and Go API continue to provide session CRUD plus WebSocket status feeds, enabling manual verification of ingestion progress while downstream media stages remain stubbed.
+
+**Overall Completion: Phase 1 = 100%, Phase 2 = ~10%**
+
+### Completed Components
+
+| Component | Location | Status |
+| --- | --- | --- |
+| HLS Ingestion Adapter | `packages/go/backend/ingestion/hls.go` | Tested |
+| RTMP Ingestion Adapter | `packages/go/backend/ingestion/rtmp.go` | Tested |
+| File Ingestion Adapter | `packages/go/backend/ingestion/file.go` | Tested |
+| Stream Source Interface | `packages/go/backend/ingestion/source.go` | Implemented |
+| Session Data Models | `packages/go/backend/session/session.go` | Implemented |
+| PostgreSQL Store | `packages/go/backend/postgres/store.go` | Tested (needs hardening) |
+| Redis Queue | `packages/go/backend/queue/queue.go` | Tested (needs hardening) |
+| Status Pub/Sub | `packages/go/backend/status/redis.go` | Tested |
+| Pipeline Stub | `packages/go/backend/pipeline/pipeline.go` | Tested (stub only) |
+| API Handlers | `apps/api/cmd/server/session.go`, `status.go` | Tested |
+| Worker Pool | `apps/worker/cmd/worker/main.go` | Tested |
+| Ingestion Worker | `apps/worker/cmd/ingestion/` | Tested |
+| Web Dashboard | `apps/web/app/page.tsx` | Implemented |
+| Docker Stack | `docker-compose.yml` | Working |
+| CI Pipeline | `.github/workflows/ci.yml` | Working |
+
+### Stubbed/Incomplete Components
+
+| Component | Current State | Target Location |
+| --- | --- | --- |
+| DASH Adapter | Returns "not implemented" error | `packages/go/backend/ingestion/dash.go` |
+| WebRTC Adapter | Not started | `packages/go/backend/ingestion/webrtc.go` |
+| Audio Normalization | Not started | `packages/go/backend/media/normalize.go` |
+| ASR (Whisper) | Stubbed in pipeline | `packages/go/backend/asr/whisper.go` |
+| Translation (MarianMT) | Stubbed in pipeline | `packages/go/backend/translation/marian.go` |
+| TTS (Coqui/Bark) | Not started | `packages/go/backend/tts/coqui.go` |
+| Subtitle Generator | Not started | `packages/go/backend/output/subtitle.go` |
+| Authentication | Not started | `apps/api/cmd/server/auth.go` |
+| Casting Services | Not started | `packages/go/backend/casting/` |
+| Frontend Tests | Not started | `apps/web/__tests__/` |
+
+### Technical Debt
+
+| Issue | Location | Remediation |
+| --- | --- | --- |
+| Manual SQL concatenation | `packages/go/backend/postgres/client.go` | Replace with `pgx` parameterized queries |
+| Raw RESP protocol | `packages/go/backend/redis/client.go` | Replace with `go-redis` client |
+| No connection pooling | Both postgres and redis clients | Implement pooling with managed clients |
+| No database migrations | `packages/go/backend/postgres/` | Add `golang-migrate` tooling |
+| No Redis tests | `packages/go/backend/redis/client.go` | Add unit tests with mock connections |
 
 ---
 
