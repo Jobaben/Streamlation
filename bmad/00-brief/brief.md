@@ -1,22 +1,28 @@
 # Brief
 
 ## Problem statement
-- [ ] TBD
+- Describe the core problem and who is impacted.
+- Include current pain points and why this matters now.
 
 ## Goals
-- [ ] TBD
+- List measurable outcomes or user-visible wins.
+- Include success signals (speed, accuracy, adoption, etc.).
 
 ## Non-goals
-- [ ] TBD
+- Explicitly list what will not be addressed in this effort.
 
 ## Users/scenarios
-- [ ] TBD
+- Primary user types and their scenarios.
+- Include at least one end-to-end scenario per user type.
 
 ## Constraints
-- [ ] TBD
+- Security, privacy, compliance, and compatibility constraints.
+- Operational limits (availability, latency, scale).
 
 ## Edge cases
-- [ ] TBD
+- Failure modes, unusual inputs, and boundary conditions.
+- Handling of partial data or degraded states.
 
 ## Open questions
-- [ ] TBD
+- Unknowns that must be resolved before implementation.
+- Dependencies on stakeholders or external systems.

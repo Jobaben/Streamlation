@@ -1,31 +1,36 @@
 # Architecture
 
 ## Context & goals
-- [ ] TBD
+- Restate the PRD goals in technical terms.
+- Constraints that shape the design.
 
 ## Proposed solution (narrative)
-- [ ] TBD
+- End-to-end description of the solution flow.
+- Components/services involved and their responsibilities.
 
 ## Alternatives considered
-- [ ] TBD
+- Other approaches considered and why they were rejected.
 
 ## Boundaries/touchpoints
-- [ ] TBD
+- Where code changes occur (modules, services, APIs).
+- External systems, integrations, or contracts touched.
 
 ## Data flow
-- [ ] TBD
+- Data inputs/outputs and transformations.
+- Storage and lifecycle considerations.
 
 ## Validation & error handling
-- [ ] TBD
+- Input validation rules and error reporting.
+- Retry, fallback, and recovery behavior.
 
 ## Backwards compatibility
-- [ ] TBD
+- Migration needs, versioning, and rollout safety.
 
 ## Observability
-- [ ] TBD
+- Logs, metrics, and alerts to add or modify.
 
 ## Test strategy
-- [ ] TBD
+- Unit/integration/e2e coverage plan aligned to ACs.
 
 ## Operational considerations
-- [ ] TBD
+- Deployment, scaling, and ongoing maintenance concerns.
